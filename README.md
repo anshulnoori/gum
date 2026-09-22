@@ -3,7 +3,7 @@
 Gum v2 is a Kotlin-first framework for FIRST Tech Challenge robot programs.
 It connects functional OpModes, lifecycle-scoped dependency injection, controller events, and state-machine subsystems.
 
-**Status: design baseline. No runnable implementation or published artifact exists yet.**
+**Status: the first JVM lifecycle slice is implemented and tested. No FTC integration or published artifact exists yet.**
 
 This repository starts with independent Git history. The previous implementation remains in [old-gum](https://github.com/anshulnoori/old-gum).
 
@@ -24,6 +24,19 @@ This repository starts with independent Git history. The previous implementation
 - [Domain language](CONTEXT.md): terms used by the project.
 - [Architecture decisions](docs/adr/0001-runtime-ownership.md): reasons for the selected runtime model.
 - [Research index](docs/research/README.md): source evidence and compatibility limits.
+- [Implemented lifecycle](docs/lifecycle.md): executable interface and cleanup contracts.
 
-The first implementation slice covers the public OpMode lifecycle with fake dependencies and a controllable host.
+## Build and test
+
+Install JDK 17. Then run:
+
+```sh
+./gradlew :core:test
+```
+
+The wrapper pins Gradle 9.1.0 and verifies its distribution checksum.
+The JVM module uses Kotlin 2.3.20 and targets Java 8 bytecode.
+These pins support this slice. They do not certify the future Android dependency combination.
+
+In a Debian-based orb, `.agents/setup` installs JDK 17 and runs the tests.
 FTC device tests remain necessary before competition use.

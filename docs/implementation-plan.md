@@ -3,14 +3,16 @@
 ## Baseline status
 
 The repository has independent history and a documented design.
-There is no implementation, build, dependency lock, or completed compatibility test yet.
+The first JVM lifecycle slice has a pinned Gradle/Kotlin build and dependency locks.
+The remaining integrations have no completed compatibility tests.
 
-The first implementation requires a JDK and a pinned Gradle toolchain.
-Public test interfaces require confirmation before the first TDD cycle.
+The user approved toolchain installation and tests through program descriptors and host-driven sessions.
 
 ## 1. Execute one OpMode lifecycle without hardware
 
-Proposed test interface: a program descriptor and its host-driven session.
+Status: implemented. See [the lifecycle interface](lifecycle.md).
+
+Test interface: a program descriptor and its host-driven session.
 Tests supply fake dependencies and observable resource behavior through that public interface.
 They do not assert private collections or generated code structure.
 
