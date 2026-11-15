@@ -2,12 +2,13 @@
 
 The `core` module runs on the JVM without Android or robot hardware.
 It implements the first lifecycle slice, not the full Gum runtime.
+The `ftc` module hosts these programs in the FTC SDK; see [FTC host](#ftc-host).
 
 ## Define a program and acquire dependencies
 
 ```kotlin
-val main = teleop("Main", dependencies = {
-    val robot = createRobotGraph()
+val main = teleop<Hub, Robot>("Main", group = "Competition", dependencies = {
+    val robot = createRobotGraph(environment)
     onStop { robot.close() }
     robot
 }) { robot ->
@@ -18,7 +19,9 @@ val main = teleop("Main", dependencies = {
 ```
 
 The robot methods illustrate application-owned behavior, not a Gum robot interface.
-The factory is ordinary Kotlin. It can call a generated DI factory later.
+The factory is ordinary Kotlin. It can call a generated DI factory.
+`environment` is the value the host passes to `initialize`, such as FTC hardware access.
+It is available during dependency creation and setup. Do not retain it beyond the session.
 Gum does not close arbitrary graph objects automatically.
 
 If construction acquires multiple resources, the factory registers cleanup immediately after each acquisition.
@@ -28,7 +31,7 @@ Gum cannot discover resources that never register cleanup.
 ## Drive the session
 
 ```kotlin
-val session = main.initialize()
+val session = main.initialize(hub)
 try {
     session.tick()  // INIT callbacks only
     session.start()
@@ -44,7 +47,8 @@ This example does not register an FTC OpMode or implement a timed robot loop.
 
 ## Contracts
 
-- Declaration creates no dependency graph. Each `initialize()` call invokes the factory again.
+- Declaration creates no dependency graph. Each `initialize(environment)` call invokes the factory again.
+- Dependencies and setup see the environment passed to that `initialize` call.
 - Factories must return fresh scoped graphs. Gum cannot prevent a factory from returning a singleton.
 - Setup runs once. Its return leaves the session in INIT.
 - Registration closes when setup returns. It cannot resume during updates or after STOP.
@@ -59,5 +63,25 @@ This example does not register an FTC OpMode or implement a timed robot loop.
 - The current callback must return after it requests STOP. Gum cannot preempt synchronous user code.
 - Recursive START or update dispatch is invalid. Wrong-thread access is invalid.
 
-Metadata beyond the program name, other program kinds, controller events, and success handoff are not implemented yet.
-Metro, Ivy, KStateMachine, FTC, and Sloth adapters remain separate integration work.
+Program metadata holds a name, kind (TeleOp, autonomous, or utility), group, and description.
+Controller events and success handoff are not implemented yet.
+Ivy, KStateMachine, and Sloth adapters remain separate integration work.
+
+## FTC host
+
+The `ftc` module provides `teleop`, `autonomous`, and `utility` builders whose environment is `FtcEnvironment`:
+the session's `hardwareMap`, `telemetry`, `gamepad1`, and `gamepad2`.
+TeamCode registers programs from a static method that the SDK discovers:
+
+```kotlin
+@OpModeRegistrar
+fun registerOpModes(manager: OpModeManager) = registerPrograms(manager, main, scoreAndPark)
+```
+
+Each SDK run initializes a new session in `init`, ticks it in `init_loop` and `loop`, starts it in `start`, and stops it in `stop`.
+The SDK calls these methods on one OpMode thread, which satisfies the session thread contract.
+The host owns bulk reads: it sets every hub to manual caching and clears the cache once before each dispatch.
+The SDK updates Driver Station telemetry after each dispatch.
+FTC SDK 12.0 `OpModeMeta` carries the description; whether the Driver Station shows it is unverified.
+
+Status: compiled into an APK with FTC SDK 12.0 and a Metro graph. Not yet run on a Control Hub.

@@ -3,7 +3,7 @@
 Gum v2 is a Kotlin-first framework for FIRST Tech Challenge robot programs.
 It connects functional OpModes, lifecycle-scoped dependency injection, controller events, and state-machine subsystems.
 
-**Status: the first JVM lifecycle slice is implemented and tested. No FTC integration or published artifact exists yet.**
+**Status: the JVM lifecycle and a minimal FTC host are implemented. The host compiles into an FTC SDK 12.0 app but has not run on a robot. Ivy, KStateMachine, controller events, handoff, and Sloth are not integrated, and no artifact is published.**
 
 This repository starts with independent Git history. The previous implementation remains in [old-gum](https://github.com/anshulnoori/old-gum).
 
@@ -34,9 +34,11 @@ Install JDK 17. Then run:
 ./gradlew :core:test
 ```
 
+`:ftc` is an Android library and also needs an Android SDK through `ANDROID_HOME` or `local.properties`.
+
 The wrapper pins Gradle 9.1.0 and verifies its distribution checksum.
-The JVM module uses Kotlin 2.3.20 and targets Java 8 bytecode.
-These pins support this slice. They do not certify the future Android dependency combination.
+Both modules use Kotlin 2.3.20 and target Java 8 bytecode. `:ftc` uses AGP 8.13.2 and compiles against FTC SDK 12.0.0.
+Consumers can build Gum from source with a Gradle `includeBuild`; the [apex-2026](https://ampcode.com/@anshulnoori/apex-2026) robot does this.
 
 In a Debian-based orb, `.agents/setup` installs JDK 17 and runs the tests.
 FTC device tests remain necessary before competition use.

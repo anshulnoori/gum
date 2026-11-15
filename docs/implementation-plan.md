@@ -31,6 +31,11 @@ Do not create fake Ivy or KStateMachine runtimes as substitutes for their actual
 
 ## 2. Validate the selected toolchain and Metro
 
+Status: Android assembly verified; device evidence missing.
+FTC SDK 12.0.0, AGP 8.13.2, Gradle 9.1.0, Kotlin 2.3.20, and Metro 1.5.2 assemble the apex-2026 debug APK with a Metro session graph.
+Metro 1.5.2 needs Gradle to run on JDK 21 or newer and inlines Java 11 bytecode, so consumers target Java 11.
+A minimal FTC host, part of slice 6, registers programs through `@OpModeRegistrar` without Sloth.
+
 Create the smallest FTC consumer plus a JVM-testable lifecycle module.
 Pin versions from authoritative compatibility information, not old Gum's catalog.
 Compile a real Metro graph with qualified hardware providers and per-session subsystem instances.
