@@ -70,15 +70,15 @@ Ivy, KStateMachine, and Sloth adapters remain separate integration work.
 ## FTC host
 
 The `ftc` module provides `teleop`, `autonomous`, and `utility` builders whose environment is `FtcEnvironment`:
-the session's `hardwareMap`, `telemetry`, `gamepad1`, and `gamepad2`.
-TeamCode registers programs from a static method that the SDK discovers:
+the session's `hardware`, `hardwareMap`, `telemetry`, `gamepad1`, and `gamepad2`.
+TeamCode registers programs, with the robot's [hardware configuration](hardware.md), from a static method that the SDK discovers:
 
 ```kotlin
 @OpModeRegistrar
-fun registerOpModes(manager: OpModeManager) = registerPrograms(manager, main, scoreAndPark)
+fun registerOpModes(manager: OpModeManager) = registerPrograms(manager, Apex, main, scoreAndPark)
 ```
 
-Each SDK run initializes a new session in `init`, ticks it in `init_loop` and `loop`, starts it in `start`, and stops it in `stop`.
+Each SDK run checks the active configuration for every declared device, then initializes a new session in `init`, ticks it in `init_loop` and `loop`, starts it in `start`, and stops it in `stop`.
 The SDK calls these methods on one OpMode thread, which satisfies the session thread contract.
 The host owns bulk reads: it sets every hub to manual caching and clears the cache once before each dispatch.
 The SDK updates Driver Station telemetry after each dispatch.

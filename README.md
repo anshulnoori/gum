@@ -3,7 +3,7 @@
 Gum v2 is a Kotlin-first framework for FIRST Tech Challenge robot programs.
 It connects functional OpModes, lifecycle-scoped dependency injection, controller events, and state-machine subsystems.
 
-**Status: the JVM lifecycle and a minimal FTC host are implemented. The host compiles into an FTC SDK 12.0 app but has not run on a robot. Ivy, KStateMachine, controller events, handoff, and Sloth are not integrated, and no artifact is published.**
+**Status: the JVM lifecycle, a minimal FTC host, and hardware configuration from code are implemented. They compile into an FTC SDK 12.0 app but have not run on a robot. Ivy, KStateMachine, controller events, handoff, and Sloth are not integrated, and no artifact is published.**
 
 This repository starts with independent Git history. The previous implementation remains in [old-gum](https://github.com/anshulnoori/old-gum).
 
@@ -25,6 +25,7 @@ This repository starts with independent Git history. The previous implementation
 - [Architecture decisions](docs/adr/0001-runtime-ownership.md): reasons for the selected runtime model.
 - [Research index](docs/research/README.md): source evidence and compatibility limits.
 - [Implemented lifecycle](docs/lifecycle.md): executable interface and cleanup contracts.
+- [Hardware configuration](docs/hardware.md): robot wiring declared in Kotlin, generated into the FTC configuration.
 
 ## Build and test
 
@@ -34,10 +35,12 @@ Install JDK 17. Then run:
 ./gradlew :core:test
 ```
 
+Run `./gradlew :hardware:test` for the hardware configuration.
 `:ftc` is an Android library and also needs an Android SDK through `ANDROID_HOME` or `local.properties`.
+The Gradle plugin in `gradle-plugin/` is a separate build that FTC apps include through `pluginManagement`.
 
 The wrapper pins Gradle 9.1.0 and verifies its distribution checksum.
-Both modules use Kotlin 2.3.20 and target Java 8 bytecode. `:ftc` uses AGP 8.13.2 and compiles against FTC SDK 12.0.0.
+The modules use Kotlin 2.3.20 and target Java 8 bytecode. `:ftc` uses AGP 8.13.2 and compiles against FTC SDK 12.0.0.
 Consumers can build Gum from source with a Gradle `includeBuild`; the [apex-2026](https://ampcode.com/@anshulnoori/apex-2026) robot does this.
 
 In a Debian-based orb, `.agents/setup` installs JDK 17 and runs the tests.

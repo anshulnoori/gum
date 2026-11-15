@@ -4,6 +4,7 @@ import com.anshulnoori.gum.core.OpModeSession
 import com.anshulnoori.gum.core.Program
 import com.anshulnoori.gum.core.ProgramKind
 import com.anshulnoori.gum.core.ProgramScope
+import com.anshulnoori.gum.hardware.RobotConfig
 import com.qualcomm.hardware.lynx.LynxModule
 import com.qualcomm.robotcore.eventloop.opmode.OpMode
 import com.qualcomm.robotcore.eventloop.opmode.OpModeManager
@@ -20,6 +21,8 @@ import com.anshulnoori.gum.core.utility as coreUtility
  * Gamepads are the SDK's live objects; controller events are not implemented yet.
  */
 class FtcEnvironment internal constructor(
+    /** Devices declared in the registered [RobotConfig]. */
+    val hardware: Hardware,
     val hardwareMap: HardwareMap,
     val telemetry: Telemetry,
     val gamepad1: Gamepad,
@@ -56,8 +59,9 @@ fun <D> utility(
 /**
  * Registers programs with the FTC SDK. Call it from a TeamCode method annotated with
  * `@OpModeRegistrar`, which the SDK discovers when the Robot Controller app starts.
+ * Each INIT first checks that the active configuration has every device [config] declares.
  */
-fun registerPrograms(manager: OpModeManager, vararg programs: FtcProgram<*>) {
+fun registerPrograms(manager: OpModeManager, config: RobotConfig, vararg programs: FtcProgram<*>) {
     for (program in programs) {
         val metadata = program.metadata
         val flavor = when (metadata.kind) {
@@ -71,7 +75,7 @@ fun registerPrograms(manager: OpModeManager, vararg programs: FtcProgram<*>) {
             .setFlavor(flavor)
             .setDescription(metadata.description)
             .build()
-        manager.register(meta, GumOpMode(program))
+        manager.register(meta, GumOpMode(config, program))
     }
 }
 
@@ -82,14 +86,15 @@ fun registerPrograms(manager: OpModeManager, vararg programs: FtcProgram<*>) {
  *
  * Gum owns bulk reads: every hub uses manual caching, cleared once before each dispatch.
  */
-private class GumOpMode(private val program: FtcProgram<*>) : OpMode() {
+private class GumOpMode(private val config: RobotConfig, private val program: FtcProgram<*>) : OpMode() {
     private var session: OpModeSession? = null
     private var hubs: List<LynxModule> = emptyList()
 
     override fun init() {
+        val hardware = Hardware(hardwareMap).apply { requireDevices(config) }
         hubs = hardwareMap.getAll(LynxModule::class.java)
         hubs.forEach { it.bulkCachingMode = LynxModule.BulkCachingMode.MANUAL }
-        session = program.initialize(FtcEnvironment(hardwareMap, telemetry, gamepad1, gamepad2))
+        session = program.initialize(FtcEnvironment(hardware, hardwareMap, telemetry, gamepad1, gamepad2))
     }
 
     override fun init_loop() {

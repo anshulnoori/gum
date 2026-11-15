@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "gum"
 include(":core")
 include(":ftc")
+include(":hardware")
