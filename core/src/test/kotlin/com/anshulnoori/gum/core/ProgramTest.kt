@@ -14,7 +14,7 @@ class ProgramTest {
     fun `descriptor defers graph creation until INIT and creates a fresh graph each time`() {
         val events = mutableListOf<String>()
         val graphs = mutableListOf<Any>()
-        val program = teleop(
+        val program = teleop<Unit, Any>(
             name = "Driver",
             dependencies = {
                 events += "graph"
@@ -26,12 +26,12 @@ class ProgramTest {
         }
 
         assertEquals(emptyList(), events)
-        val first = program.initialize()
+        val first = program.initialize(Unit)
         assertEquals(SessionState.INIT, first.state)
         assertEquals(listOf("graph", "setup"), events)
         first.stop()
 
-        val second = program.initialize()
+        val second = program.initialize(Unit)
         assertEquals(SessionState.INIT, second.state)
         assertEquals(listOf("graph", "setup", "graph", "setup"), events)
         assertNotSame(graphs[0], graphs[1])
@@ -39,14 +39,32 @@ class ProgramTest {
     }
 
     @Test
+    fun `each INIT exposes that invocation's host environment to dependencies and setup`() {
+        val seen = mutableListOf<String>()
+        val program = autonomous<String, String>(
+            name = "Score",
+            group = "Competition",
+            dependencies = { "graph for $environment" },
+        ) { graph -> seen += "$graph, setup in $environment" }
+
+        assertEquals(ProgramMetadata("Score", ProgramKind.AUTONOMOUS, "Competition", ""), program.metadata)
+        program.initialize("first hub").stop()
+        program.initialize("second hub").stop()
+        assertEquals(
+            listOf("graph for first hub, setup in first hub", "graph for second hub, setup in second hub"),
+            seen,
+        )
+    }
+
+    @Test
     fun `host gates active callbacks until START and STOP prevents further callbacks`() {
         val events = mutableListOf<String>()
-        val session = teleop("Driver", dependencies = { Unit }) {
+        val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
             onInitTick { events += "init" }
             onStart { events += "start" }
             onTick { events += "active" }
             onStop { events += "stop" }
-        }.initialize()
+        }.initialize(Unit)
 
         session.tick()
         assertEquals(listOf("init"), events)
@@ -69,11 +87,11 @@ class ProgramTest {
         val events = mutableListOf<String>()
         val firstFailure = IllegalStateException("second resource")
         val secondFailure = IllegalArgumentException("first resource")
-        val session = teleop("Driver", dependencies = { Unit }) {
+        val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
             onStop { events += "first"; throw secondFailure }
             onStop { events += "second"; throw firstFailure }
             onStop { events += "third" }
-        }.initialize()
+        }.initialize(Unit)
 
         val error = assertFailsWith<IllegalStateException> { session.stop() }
         assertSame(firstFailure, error)
@@ -89,13 +107,13 @@ class ProgramTest {
         val events = mutableListOf<String>()
         val original = IllegalArgumentException("setup")
         val cleanup = IllegalStateException("cleanup")
-        val program = teleop("Driver", dependencies = { Unit }) {
+        val program = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
             onStop { events += "release" }
             onStop { throw cleanup }
             throw original
         }
 
-        val error = assertFailsWith<IllegalArgumentException> { program.initialize() }
+        val error = assertFailsWith<IllegalArgumentException> { program.initialize(Unit) }
         assertSame(original, error)
         assertEquals(listOf(cleanup), error.suppressed.toList())
         assertEquals(listOf("release"), events)
@@ -105,14 +123,14 @@ class ProgramTest {
     fun `dependency factory can register cleanup before construction fails`() {
         val events = mutableListOf<String>()
         val original = IllegalStateException("missing hardware")
-        val program = teleop<Unit>("Driver", dependencies = {
+        val program = teleop<Unit, Unit>("Driver", dependencies = {
             onStop { events += "release acquired resource" }
             throw original
         }) {
             events += "setup must not run"
         }
 
-        assertSame(original, assertFailsWith<IllegalStateException> { program.initialize() })
+        assertSame(original, assertFailsWith<IllegalStateException> { program.initialize(Unit) })
         assertEquals(listOf("release acquired resource"), events)
     }
 
@@ -122,14 +140,14 @@ class ProgramTest {
             val events = mutableListOf<String>()
             val original = IllegalArgumentException(phase)
             val fail: () -> Unit = { throw original }
-            val session = teleop("Driver", dependencies = { Unit }) {
+            val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
                 onStop { events += "cleanup" }
                 when (phase) {
                     "init" -> { onInitTick(fail); onInitTick { events += "unexpected" } }
                     "start" -> { onStart(fail); onStart { events += "unexpected" } }
                     "active" -> { onTick(fail); onTick { events += "unexpected" } }
                 }
-            }.initialize()
+            }.initialize(Unit)
 
             if (phase == "active") session.start()
             val error = assertFailsWith<IllegalArgumentException>(phase) {
@@ -147,11 +165,11 @@ class ProgramTest {
     fun `STOP inside a callback prevents later callbacks in the same tick`() {
         val events = mutableListOf<String>()
         lateinit var session: OpModeSession
-        session = teleop("Driver", dependencies = { Unit }) {
+        session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
             onTick { events += "first"; session.stop() }
             onTick { events += "unexpected" }
             onStop { events += "stop" }
-        }.initialize()
+        }.initialize(Unit)
         session.start()
         session.tick()
         assertEquals(listOf("first", "stop"), events)
@@ -159,8 +177,8 @@ class ProgramTest {
 
     @Test
     fun `callback registration closes when setup returns including after STOP`() {
-        lateinit var scope: ProgramScope
-        val session = teleop("Driver", dependencies = { Unit }) { scope = this }.initialize()
+        lateinit var scope: ProgramScope<Unit>
+        val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) { scope = this }.initialize(Unit)
         assertFailsWith<IllegalStateException> { scope.onTick {} }
         session.stop()
         assertFailsWith<IllegalStateException> { scope.onStop {} }
@@ -168,7 +186,7 @@ class ProgramTest {
 
     @Test
     fun `foreign threads cannot read or advance a session`() {
-        val session = teleop("Driver", dependencies = { Unit }) {}.initialize()
+        val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {}.initialize(Unit)
         val worker = Executors.newSingleThreadExecutor()
         try {
             for (action in listOf<() -> Unit>(
@@ -190,10 +208,10 @@ class ProgramTest {
     fun `recursive tick fails and cleans up instead of nesting control updates`() {
         val events = mutableListOf<String>()
         lateinit var session: OpModeSession
-        session = teleop("Driver", dependencies = { Unit }) {
+        session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
             onTick { session.tick() }
             onStop { events += "stop" }
-        }.initialize()
+        }.initialize(Unit)
         session.start()
         assertFailsWith<IllegalStateException> { session.tick() }
         assertEquals(SessionState.STOPPED, session.state)

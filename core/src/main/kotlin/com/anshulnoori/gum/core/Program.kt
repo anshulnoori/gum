@@ -1,17 +1,32 @@
 package com.anshulnoori.gum.core
 
-/** A reusable program definition. Dependencies are created only by [initialize]. */
-class Program<D> internal constructor(
+enum class ProgramKind { TELEOP, AUTONOMOUS, UTILITY }
+
+/** Host-facing metadata. It does not affect lifecycle behavior. */
+data class ProgramMetadata(
     val name: String,
-    private val dependencies: ProgramScope.() -> D,
-    private val setup: ProgramScope.(D) -> Unit,
+    val kind: ProgramKind,
+    val group: String,
+    val description: String,
+)
+
+/**
+ * A reusable program definition. Dependencies are created only by [initialize].
+ * [E] is the environment the host supplies at INIT, such as FTC hardware access.
+ */
+class Program<E, D> internal constructor(
+    val metadata: ProgramMetadata,
+    private val dependencies: ProgramScope<E>.() -> D,
+    private val setup: ProgramScope<E>.(D) -> Unit,
 ) {
+    val name: String get() = metadata.name
+
     /**
      * Creates a session on the calling thread and runs dependency creation and setup once.
      * A failure runs registered cleanup before propagating the original error.
      */
-    fun initialize(): OpModeSession {
-        val scope = ProgramScope()
+    fun initialize(environment: E): OpModeSession {
+        val scope = ProgramScope(environment)
         val session = OpModeSession(scope)
         session.guard {
             val graph = scope.dependencies()
@@ -22,18 +37,39 @@ class Program<D> internal constructor(
     }
 }
 
-fun <D> teleop(
+fun <E, D> teleop(
     name: String,
-    dependencies: ProgramScope.() -> D,
-    setup: ProgramScope.(D) -> Unit,
-): Program<D> = Program(name, dependencies, setup)
+    group: String = "",
+    description: String = "",
+    dependencies: ProgramScope<E>.() -> D,
+    setup: ProgramScope<E>.(D) -> Unit,
+): Program<E, D> = Program(ProgramMetadata(name, ProgramKind.TELEOP, group, description), dependencies, setup)
+
+fun <E, D> autonomous(
+    name: String,
+    group: String = "",
+    description: String = "",
+    dependencies: ProgramScope<E>.() -> D,
+    setup: ProgramScope<E>.(D) -> Unit,
+): Program<E, D> = Program(ProgramMetadata(name, ProgramKind.AUTONOMOUS, group, description), dependencies, setup)
+
+fun <E, D> utility(
+    name: String,
+    group: String = "",
+    description: String = "",
+    dependencies: ProgramScope<E>.() -> D,
+    setup: ProgramScope<E>.(D) -> Unit,
+): Program<E, D> = Program(ProgramMetadata(name, ProgramKind.UTILITY, group, description), dependencies, setup)
 
 /**
  * Registration is permitted only during dependency creation and setup, on the initializing thread.
  * Register resource cleanup immediately after acquisition, including within a dependency factory.
  * Callbacks must not block waiting for physical motion.
  */
-class ProgramScope internal constructor() {
+class ProgramScope<out E> internal constructor(
+    /** The host environment for this session. Do not retain it beyond the session. */
+    val environment: E,
+) {
     private val owner = Thread.currentThread()
     private var configuring = true
     internal val initCallbacks = mutableListOf<() -> Unit>()
@@ -75,7 +111,7 @@ enum class SessionState { INIT, ACTIVE, STOPPED }
  * The host must call [stop] when it exits, including before START.
  * Callback failures stop the session and propagate, with cleanup failures attached as suppressed errors.
  */
-class OpModeSession internal constructor(private val scope: ProgramScope) {
+class OpModeSession internal constructor(private val scope: ProgramScope<*>) {
     private var currentState = SessionState.INIT
     private var dispatching = false
 
