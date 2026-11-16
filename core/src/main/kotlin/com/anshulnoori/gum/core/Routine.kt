@@ -1,0 +1,129 @@
+package com.anshulnoori.gum.core
+
+import com.pedropathing.ivy.Command
+import com.pedropathing.ivy.behaviors.EndCondition
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.RestrictsSuspension
+import kotlin.coroutines.createCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
+import java.util.concurrent.CancellationException
+
+/**
+ * An Ivy command written as sequential code:
+ *
+ * ```
+ * routine {
+ *     await(robot.intake.collect())
+ *     waitSeconds(0.5)
+ *     await(robot.flywheel.spinTo(3000.0))
+ * }
+ * ```
+ *
+ * It runs on the OpMode thread inside Ivy's update, with Kotlin's built-in coroutines: no threads,
+ * no dispatcher. Each suspension resumes on a later update.
+ *
+ * Like Ivy's own groups, the routine owns everything it runs for its whole duration: it reserves
+ * [requirements], and [Routine.await] fails for a command that needs anything else, because awaited
+ * commands run inside the routine rather than through Ivy's scheduler.
+ *
+ * When Ivy interrupts or cancels it, the command it is awaiting ends as interrupted, and the routine
+ * resumes with a [CancellationException], so its `finally` blocks run. An exception from the body
+ * propagates out of Ivy's update and stops the OpMode.
+ */
+fun routine(vararg requirements: Any, body: suspend Routine.() -> Unit): Command {
+    val routine = Routine(requirements.toSet())
+    return Command.build()
+        .requiring(*requirements)
+        .setStart { routine.begin(body) }
+        .setExecute { routine.step() }
+        .setDone { routine.finished }
+        .setEnd { routine.end(it) }
+}
+
+@RestrictsSuspension
+class Routine internal constructor(private val requirements: Set<Any>) {
+    private var continuation: Continuation<Unit>? = null
+    private var child: Command? = null
+    private var condition: (() -> Boolean)? = null
+    internal var finished = false
+        private set
+
+    /** Runs [command] to completion inside this routine. It may need only the routine's requirements. */
+    suspend fun await(command: Command) {
+        val missing = command.requirements() - requirements
+        check(missing.isEmpty()) { "Add $missing to routine(...) to await this command" }
+        command.start()
+        if (command.done()) {
+            command.end(EndCondition.NATURALLY)
+            return
+        }
+        suspendCoroutine { child = command; continuation = it }
+    }
+
+    /** Waits until [condition] is true, checking once per update. Returns at once if it already is. */
+    suspend fun waitUntil(condition: () -> Boolean) {
+        if (condition()) return
+        suspendCoroutine { this.condition = condition; continuation = it }
+    }
+
+    /** Waits at least [seconds]. */
+    suspend fun waitSeconds(seconds: Double) {
+        val deadline = System.nanoTime() + (seconds * 1e9).toLong()
+        waitUntil { System.nanoTime() >= deadline }
+    }
+
+    /** Waits for the next update. */
+    suspend fun nextUpdate() {
+        suspendCoroutine { condition = { true }; continuation = it }
+    }
+
+    internal fun begin(body: suspend Routine.() -> Unit) {
+        finished = false
+        child = null
+        condition = null
+        body.createCoroutine(this, Completion()).resume(Unit)
+    }
+
+    internal fun step() {
+        val command = child
+        if (command != null) {
+            command.execute()
+            if (!command.done()) return
+            command.end(EndCondition.NATURALLY)
+            child = null
+        } else {
+            val ready = condition ?: return
+            if (!ready()) return
+            condition = null
+        }
+        continuation!!.also { continuation = null }.resume(Unit)
+    }
+
+    internal fun end(reason: EndCondition) {
+        if (finished) return
+        // Ivy resumes a suspended command later without starting it again; keep its place.
+        if (reason == EndCondition.SUSPENDED) {
+            child?.end(EndCondition.SUSPENDED)
+            return
+        }
+        child?.end(reason)
+        child = null
+        condition = null
+        continuation?.also { continuation = null }
+            ?.resumeWithException(CancellationException("Routine ended: $reason"))
+        finished = true
+    }
+
+    private inner class Completion : Continuation<Unit> {
+        override val context: CoroutineContext get() = EmptyCoroutineContext
+
+        override fun resumeWith(result: Result<Unit>) {
+            finished = true
+            result.exceptionOrNull()?.let { if (it !is CancellationException) throw it }
+        }
+    }
+}

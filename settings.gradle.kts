@@ -11,6 +11,14 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Sloth and its Sinister runtime.
+        maven("https://repo.dairy.foundation/releases") {
+            content { includeGroupByRegex("dev\\.frozenmilk.*") }
+        }
+        // Panels.
+        maven("https://mymaven.bylazar.com/releases") {
+            content { includeGroupByRegex("com\\.bylazar.*") }
+        }
     }
 }
 
@@ -18,3 +26,4 @@ rootProject.name = "gum"
 include(":core")
 include(":ftc")
 include(":hardware")
+include(":pedro")

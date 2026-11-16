@@ -217,4 +217,28 @@ class ProgramTest {
         assertEquals(SessionState.STOPPED, session.state)
         assertEquals(listOf("stop"), events)
     }
+
+    @Test
+    fun `setup that ends with a program chains to it after a started session stops`() {
+        val teleOp = teleop<Unit, Unit>("TeleOp", dependencies = { Unit }) { }
+        val auto = autonomous<Unit, Unit>("Auto", dependencies = { Unit }) {
+            onStart { }
+            teleOp
+        }
+
+        val run = auto.initialize(Unit)
+        run.start()
+        kotlin.test.assertNull(run.next, "no next program before STOP")
+        run.stop()
+        kotlin.test.assertSame(teleOp, run.next)
+
+        val stoppedInInit = auto.initialize(Unit)
+        stoppedInInit.stop()
+        kotlin.test.assertNull(stoppedInInit.next, "a run stopped in INIT does not chain")
+
+        val plain = teleop<Unit, Unit>("Plain", dependencies = { Unit }) { onStart { } }.initialize(Unit)
+        plain.start()
+        plain.stop()
+        kotlin.test.assertNull(plain.next, "a setup that ends with anything else does not chain")
+    }
 }

@@ -67,7 +67,7 @@ public class GumHardwarePlugin implements Plugin<Project> {
                     String name = Character.toUpperCase(variant.getName().charAt(0)) + variant.getName().substring(1);
                     TaskProvider<GenerateRobotConfig> generate = project.getTasks().register(
                             "generate" + name + "GumRobotConfig", GenerateRobotConfig.class, task -> {
-                                task.setDescription("Writes the robot configuration and its activation hook.");
+                                task.setDescription("Writes the robot configuration, its activation hook, and program builders.");
                                 task.setClasspath(hardware);
                                 task.getMainClass().set("com.anshulnoori.gum.hardware.Generate");
                                 task.getClasses().fileProvider(compile.map(t -> classes.get().getAsFile()));
@@ -75,6 +75,8 @@ public class GumHardwarePlugin implements Plugin<Project> {
                             });
                     variant.getSources().getRes().addGeneratedSourceDirectory(generate, GenerateRobotConfig::getResDirectory);
                     variant.getSources().getJava().addGeneratedSourceDirectory(generate, GenerateRobotConfig::getJavaDirectory);
+                    // Kotlin compiles generated Java source directories; it does not see generated Kotlin ones.
+                    variant.getSources().getJava().addGeneratedSourceDirectory(generate, GenerateRobotConfig::getKotlinDirectory);
                 });
     }
 

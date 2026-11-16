@@ -4,6 +4,9 @@ import com.pedropathing.ivy.Command
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlin.math.abs
 
 class SubsystemTest {
     enum class Mode { OFF, COLLECTING, EJECTING }
@@ -25,6 +28,32 @@ class SubsystemTest {
             anyMode to Mode.OFF
             Mode.COLLECTING to Mode.OFF whenever { full }
         }
+    }
+
+    enum class Speed { OFF, SPINNING_UP, READY }
+
+    /** A flywheel with a fake speed sensor and a proportional controller. */
+    private class Flywheel : Subsystem<Speed>(Speed.OFF) {
+        var rpm = 0.0
+        var target = 0.0
+        var power = 0.0
+        val entered = mutableListOf<Speed>()
+        override val transitions = transitions {
+            anyMode to Speed.SPINNING_UP
+            anyMode to Speed.OFF
+            Speed.SPINNING_UP to Speed.READY whenever { abs(target - rpm) < 50 }
+        }
+
+        override fun enter(mode: Speed) {
+            entered += mode
+            if (mode == Speed.OFF) power = 0.0
+        }
+
+        override fun loop(mode: Speed) {
+            if (mode != Speed.OFF) power = 0.001 * (target - rpm)
+        }
+
+        fun spinTo(rpm: Double) = request(Speed.SPINNING_UP) { target = rpm }
     }
 
     private fun <S> session(create: () -> S): Pair<OpModeSession, S> {
@@ -123,5 +152,38 @@ class SubsystemTest {
         val (session, _) = session { Roller() }
         session.stop()
         assertFailsWith<IllegalStateException> { Roller() }
+    }
+
+    @Test
+    fun `loop runs control after commands each update, and reach waits for the mode`() {
+        val (session, flywheel) = session { Flywheel() }
+        val spinUp = flywheel.spinTo(3000.0).then(flywheel.reach(Speed.READY))
+        spinUp.schedule()
+        session.tick()
+        assertEquals(Speed.SPINNING_UP, flywheel.mode)
+        assertEquals(3.0, flywheel.power, 1e-9, "control ran in the update that requested the mode")
+
+        flywheel.rpm = 2980.0
+        session.tick()
+        assertEquals(Speed.READY, flywheel.mode)
+        assertEquals(0.02, flywheel.power, 1e-9, "control runs after the automatic move")
+        assertTrue(spinUp.isScheduled, "reach finishes on the next command pass")
+        session.tick()
+        assertFalse(spinUp.isScheduled)
+        session.stop()
+        assertEquals(0.0, flywheel.power)
+    }
+
+    @Test
+    fun `request data is set only when the move is allowed, and the current mode only updates it`() {
+        val (session, flywheel) = session { Flywheel() }
+        flywheel.spinTo(3000.0).schedule()
+        session.tick()
+        flywheel.spinTo(1000.0).schedule()
+        flywheel.request(Speed.READY) { flywheel.target = -1.0 }.schedule()
+        session.tick()
+        assertEquals(1000.0, flywheel.target)
+        assertEquals(listOf(Speed.OFF, Speed.SPINNING_UP), flywheel.entered, "the same mode is not re-entered")
+        session.stop()
     }
 }

@@ -28,14 +28,18 @@ public abstract class GenerateRobotConfig extends JavaExec {
     @OutputDirectory
     public abstract DirectoryProperty getJavaDirectory();
 
+    @OutputDirectory
+    public abstract DirectoryProperty getKotlinDirectory();
+
     @Override
     @TaskAction
     public void exec() {
-        getProject().delete(getResDirectory(), getJavaDirectory());
+        getProject().delete(getResDirectory(), getJavaDirectory(), getKotlinDirectory());
         setArgs(Arrays.asList(
                 getClasses().get().getAsFile().getPath(),
                 getResDirectory().get().getAsFile().getPath(),
                 getJavaDirectory().get().getAsFile().getPath(),
+                getKotlinDirectory().get().getAsFile().getPath(),
                 getNamespace().get()));
         super.exec();
     }

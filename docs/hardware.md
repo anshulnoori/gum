@@ -33,19 +33,14 @@ These sources are compiled for the build machine as well as the robot, so they c
 It works on the OpMode thread while an OpMode runs. A subsystem resolves only the devices it owns, in its constructor defaults.
 A mistyped device is a compile error.
 
-Register programs with the configuration. Every INIT then checks that the active configuration contains each declared device, and fails with one message listing any that are missing:
-
-```kotlin
-@OpModeRegistrar
-fun registerOpModes(manager: OpModeManager) = registerPrograms(manager, RobotMap, main)
-```
+Programs built with the generated `teleop`, `autonomous`, and `utility` check the configuration at every INIT: if the active configuration lacks a declared device, INIT fails with one message listing every missing device.
 
 ## Build
 
 Apply `com.anshulnoori.gum.hardware` to the FTC app module after `com.android.application`. For each variant it:
 
 1. Compiles `src/hardware/kotlin` on the build machine with `kotlin-compiler-embeddable`.
-2. Runs Gum's generator, which writes `res/xml/<name>.xml` and a Java class with an `@OnCreate` hook.
+2. Runs Gum's generator, which writes `res/xml/<name>.xml`, a Java class with an `@OnCreate` hook, and `GumPrograms.kt`: `teleop`, `autonomous`, and `utility` in the config object's package, typed to the `RobotGraph` there.
 3. Adds `src/hardware/kotlin` to the app's `main` sources.
 
 The generator writes the format the FTC SDK 12.0 writes: a `LynxUsbDevice` with serial number `(embedded)` and parent module address 173, one `LynxModule` per hub, and device tags from the SDK's device annotations.

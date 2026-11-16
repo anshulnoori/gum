@@ -1,6 +1,6 @@
 # Use value-based programs with compile-time DI
 
-Status: accepted program model. The Metro choice is superseded by [ADR 0003](0003-gum-owned-subsystems-and-robot.md).
+Status: accepted. [ADR 0003](0003-gum-owned-subsystems-and-robot.md) has Gum create the Metro graph, so programs no longer pass a graph factory.
 
 Programs use `val main = teleop(...) { robot -> ... }`, rather than annotated functions with generated argument injection.
 Metadata belongs to program descriptors, and each INIT creates a fresh typed dependency graph.

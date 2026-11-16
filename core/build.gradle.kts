@@ -18,6 +18,9 @@ dependencies {
     api("com.pedropathing.ivy:core:1.1.1")
     // Subsystem builds its state machines with KStateMachine; TeamCode never uses it directly.
     implementation("io.github.nsk90:kstatemachine:0.38.1")
+    // Reported button changes cross threads in a bounded circular buffer. The Atomic variants avoid
+    // sun.misc.Unsafe and VarHandle, so they run on the Control Hub's Android 7.
+    implementation("org.jctools:jctools-core:4.0.7")
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation(kotlin("test-junit5"))
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")

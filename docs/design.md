@@ -26,7 +26,7 @@ The first event date, robot hardware, and performance targets remain unknown.
 | Subsystem | Hardware ownership, control algorithms, valid operations, readiness, faults, safe responses |
 | Sloth | Development class reload and registration facilities |
 
-Gum creates subsystems per session and builds their state machines ([ADR 0003](adr/0003-gum-owned-subsystems-and-robot.md)). KSP is not a requirement.
+Metro is the DI library. Gum creates the robot graph at every INIT and builds subsystem state machines ([ADR 0003](adr/0003-gum-owned-subsystems-and-robot.md)). KSP is not a requirement.
 Kotlinx.coroutines is the optional coroutine library, not the control clock.
 No dependency versions are frozen until a consumer application compiles and the relevant contracts pass tests.
 
@@ -37,7 +37,7 @@ Top-level initialization must not create hardware, sessions, coroutine scopes, o
 The host invokes the dependency factory during INIT and passes its typed graph to the setup body.
 
 The setup body configures behavior. Its return does not stop the session.
-The host continues execution until STOP, a fatal error, or a successful autonomous handoff.
+The host continues execution until STOP or a fatal error; a program can then chain to the next one.
 Ordinary program setup does not require suspension or an `awaitStop()` call.
 
 Program kinds include TeleOp, autonomous, and utility.
@@ -70,7 +70,7 @@ val main = teleop(
 | START | Enable driver bindings and schedule startup routines |
 | Active updates | Advance control-affecting work on the robot-loop thread |
 | Shutdown | Reject new work, cancel routines, apply safe responses, close resources, release graph references |
-| Successor INIT | Create a fresh graph with explicit handoff data; await a separate START |
+| Next program INIT | After a started run stops, initialize the program setup ended with; await a separate START |
 
 Homing, vision warmup, and selection menus need explicit initialization behavior.
 Constructors must not schedule commands or move actuators.
@@ -78,34 +78,16 @@ Initialization failures require cleanup of resources already acquired.
 A cleanup failure must not prevent attempts to make other mechanisms safe.
 The exact cleanup order and error-reporting interface need implementation tests.
 
-## Successful autonomous handoff
+## Program chaining
 
-Successful completion of the designated autonomous routine immediately ends Auto and initializes its successor.
-It does not wait for a manual STOP, and it does not start TeleOp.
+A program's setup can end with the program to run next, so programs chain: `autonomous(...) { ...; driver { robot.drive.pose } }`.
+The user chose this over an `onSuccess` hook, after MercurialFTC's `exec(): Program?`.
 
-The host captures handoff data before it releases the old graph.
-It completes safe shutdown before creating the successor graph.
-Handoff data can contain a pose or configuration values, not old subsystems or active coroutine scopes.
+When a run that started stops, by Driver Station STOP or the autonomous timer, the host puts the next program into INIT under its own name and kind and waits for a separate START.
+A run stopped during INIT chains nothing. Safe shutdown completes before the next graph exists.
+Data passes through closures the next program reads during its setup, such as a pose. They must not keep old subsystems working.
 
-```kotlin
-// Proposed syntax, not a compiled example.
-val scoreAndPark = autonomous(
-    name = "Score and Park",
-    dependencies = ::createRobotGraph,
-) { robot ->
-    runOnStart {
-        robot.scorePreload().then(robot.park())
-    }
-    onSuccess {
-        mainTeleOp(initialPose = robot.drive.pose)
-    }
-}
-```
-
-Default policy: rejection, interruption, timeout, fault, and manual STOP do not trigger success handoff.
-This policy was proposed without objection; recovery hooks remain undesigned.
-STOP versus completion precedence in the same update remains an explicit test/design question.
-SDK support for dynamic initialization requires an integration test and current rules review.
+SDK support for initializing an OpMode from `stop()` requires a device test and a current rules review.
 
 ## Dependency ownership
 
@@ -175,7 +157,7 @@ No target frequency or fastest-library claim is accepted without representative 
 - A rejected Ivy command can lack a terminal callback.
 - Ivy suspension is not terminal completion.
 - Natural Ivy completion is not necessarily operation success.
-- Program registrars must reload with TeamCode.
+- Metro-generated graphs and program registrars must reload with TeamCode.
 - Stable objects must release references to previous reload classloaders.
 - Dependency changes can require a full APK install rather than Sloth reload.
 
@@ -194,12 +176,11 @@ Research is not permission to run development services during matches.
 ## Decisions still required
 
 - First event date, robot hardware, team workflow, and measurable reliability targets
-- Compatible FTC/Kotlin/Gradle/Sloth/Ivy/KStateMachine versions
+- Compatible FTC/Kotlin/Gradle/Metro/Sloth/Ivy/KStateMachine versions
 - Public lifecycle test interfaces and the dependency/cleanup contract
-- Exact update order and reentrant schedule/cancel policy
-- Command outcome propagation and conflict defaults
+- Reentrant schedule/cancel policy for commands scheduled inside Ivy's update
+- Command outcome propagation (conflicts use Ivy's priority and `ConflictBehavior`)
 - State-machine topology for coordinated mechanisms
-- Controller behavior for buttons already held at START
 - Motion/localization integration and its single update owner
 - Registration metadata and transition payload interface
 

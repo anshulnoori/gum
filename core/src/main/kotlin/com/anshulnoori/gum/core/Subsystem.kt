@@ -15,9 +15,10 @@ import ru.nsk.kstatemachine.statemachine.processEventBlocking
  * A mechanism that is in one mode at a time.
  *
  * A subclass lists its modes as an enum, sets its outputs in [enter], and exposes commands built
- * with [request]. It can restrict moves between modes and add automatic moves with [transitions].
- * Gum builds the state machine, checks automatic moves on every update after commands run, and
- * returns the subsystem to [initial] at STOP.
+ * with [request] and [reach]. It can restrict moves between modes and add automatic moves with
+ * [transitions], and run feedback control in [loop]. Gum builds the state machine; on every update
+ * after commands run, it takes automatic moves and then calls [loop]. STOP returns the subsystem
+ * to [initial].
  *
  * Construct a subsystem while an OpMode runs, on its thread; it joins that session.
  */
@@ -35,6 +36,12 @@ abstract class Subsystem<M : Enum<M>>(private val initial: M) {
     /** Sets outputs for [mode]. Runs each time the subsystem enters a mode, including [initial]. */
     protected abstract fun enter(mode: M)
 
+    /**
+     * Runs on every update after START, after commands and automatic moves, for control that
+     * depends on sensors, such as holding a flywheel speed. Does nothing unless overridden.
+     */
+    protected open fun loop(mode: M) {}
+
     /** The current mode. */
     val mode: M
         get() {
@@ -45,11 +52,40 @@ abstract class Subsystem<M : Enum<M>>(private val initial: M) {
     /**
      * A command that moves to [mode] and finishes at once; the subsystem stays in [mode] afterward.
      * It reserves this subsystem. A move [transitions] does not allow leaves the mode unchanged.
+     *
+     * [set] runs when the request is allowed, before [enter], to set data the mode uses:
+     * `request(Mode.SPINNING) { targetRpm = rpm }`. Requesting the current mode runs [set] only.
      */
-    fun request(mode: M): Command = Command.build()
+    fun request(mode: M, set: () -> Unit = {}): Command = Command.build()
         .requiring(this)
-        .setStart { if (mode != this.mode) machine.processEventBlocking(Request(mode)) }
+        .setStart {
+            val from = this.mode
+            if (mode == from) {
+                set()
+            } else if (from to mode in edges) {
+                set()
+                machine.processEventBlocking(Request(mode))
+            }
+        }
         .setDone { true }
+
+    /**
+     * A command that moves to [mode] like [request] and keeps running until it is cancelled or
+     * interrupted, then returns the subsystem to its initial mode if it is still in [mode].
+     */
+    fun hold(mode: M, set: () -> Unit = {}): Command {
+        val enter = request(mode, set)
+        return Command.build()
+            .requiring(this)
+            .setStart { enter.start() }
+            .setDone { false }
+            .setEnd { if (this.mode == mode && mode != initial) machine.processEventBlocking(Reset) }
+    }
+
+    /** A command that reserves this subsystem and finishes once it is in [mode]. */
+    fun reach(mode: M): Command = Command.build()
+        .requiring(this)
+        .setDone { this.mode == mode }
 
     /** Declares the moves between modes. */
     protected fun transitions(block: TransitionsBuilder<M>.() -> Unit): Transitions<M> =
@@ -66,22 +102,26 @@ abstract class Subsystem<M : Enum<M>>(private val initial: M) {
         val mode = mode
         val rule = automatic.firstOrNull { (it.from == null || it.from == mode) && it.to != mode && it.condition!!() }
         if (rule != null) machine.processEventBlocking(Automatic(rule))
+        loop(current)
     }
 
     internal fun reset() {
         machine.processEventBlocking(Reset)
     }
 
-    private fun build(): StateMachine {
-        val modes = initial.declaringJavaClass.enumConstants.toList()
-        val requestable = transitions?.rules?.filter { it.condition == null }
-            ?: listOf(Rule(null, null))
-        val edges = requestable.flatMap { rule ->
+    private val modes: List<M> by lazy { initial.declaringJavaClass.enumConstants.toList() }
+
+    // Moves a command may request.
+    private val edges: Set<Pair<M, M>> by lazy {
+        val requestable = transitions?.rules?.filter { it.condition == null } ?: listOf(Rule(null, null))
+        requestable.flatMap { rule ->
             (rule.from?.let(::listOf) ?: modes).flatMap { from ->
                 (rule.to?.let(::listOf) ?: modes).filter { it != from }.map { from to it }
             }
         }.toSet()
+    }
 
+    private fun build(): StateMachine {
         return createStdLibStateMachine(javaClass.simpleName) {
             val states = modes.associateWith { DefaultState(it.name) }
             for ((mode, state) in states) {

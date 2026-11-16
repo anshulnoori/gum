@@ -3,7 +3,7 @@
 Gum v2 is a Kotlin-first framework for FIRST Tech Challenge robot programs.
 It connects functional OpModes, lifecycle-scoped dependency injection, controller events, and state-machine subsystems.
 
-**Status: the JVM lifecycle, a minimal FTC host, hardware configuration from code, and Ivy scheduling are implemented, and apex-2026 runs a KStateMachine intake on them. They compile into an FTC SDK 12.0 app but have not run on a robot. Operation outcomes, controller events, handoff, and Sloth are not implemented, and no artifact is published.**
+**Status: implemented and JVM-tested: the lifecycle, Ivy scheduling, KStateMachine subsystems with feedback control, gamepad events from the SDK callback, coroutine routines, background reads, program chains with a chain-lasting Metro scope, Sloth registration, hardware configuration from Kotlin, a Pedro Pathing drive, and Panels telemetry and field drawing. apex-2026 compiles on it with FTC SDK 12.0. Nothing has run on a robot yet. Operation outcomes are not implemented, and no artifact is published.**
 
 This repository starts with independent Git history. The previous implementation remains in [old-gum](https://github.com/anshulnoori/old-gum).
 
@@ -11,11 +11,14 @@ This repository starts with independent Git history. The previous implementation
 
 - Ivy owns commands, composition, and subsystem reservations.
 - KStateMachine owns subsystem state machines.
-- Gum builds subsystem state machines and creates subsystems per session; see [ADR 0003](docs/adr/0003-gum-owned-subsystems-and-robot.md).
+- Metro is the compile-time DI. Gum builds subsystem state machines and creates the robot graph at every INIT; see [ADR 0003](docs/adr/0003-gum-owned-subsystems-and-robot.md).
 - OpModes are values whose setup bodies configure behavior. Gum owns execution.
-- Sloth supplies development reload and registration integration.
-- Coroutines are optional. The control loop does not launch subsystem jobs on a thread pool.
-- Successful autonomous completion immediately initializes its TeleOp successor, without starting it.
+- Sloth registers programs and supplies development reload.
+- Routines use Kotlin's built-in coroutines inside Ivy's update; slow sensors read on background threads. Only the OpMode thread writes outputs.
+- Gamepad input comes from the SDK's callback, not polling.
+- Pedro Pathing 3 drives through Ivy's Pedro commands; see the `pedro` module.
+- Panels shows telemetry, the field, and live-tuned values; Gum sends to it after every update.
+- A program's setup can end with the next program; after the run stops, Gum initializes it without starting it.
 
 ## Design and implementation
 
@@ -36,7 +39,7 @@ Install JDK 17. Then run:
 ```
 
 Run `./gradlew :hardware:test` for the hardware configuration.
-`:ftc` is an Android library and also needs an Android SDK through `ANDROID_HOME` or `local.properties`.
+`:ftc` and `:pedro` are Android libraries and also need an Android SDK through `ANDROID_HOME` or `local.properties`.
 The Gradle plugin in `gradle-plugin/` is a separate build that FTC apps include through `pluginManagement`.
 
 The wrapper pins Gradle 9.1.0 and verifies its distribution checksum.

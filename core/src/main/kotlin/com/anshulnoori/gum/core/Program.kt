@@ -1,6 +1,8 @@
 package com.anshulnoori.gum.core
 
 import com.pedropathing.ivy.Scheduler
+import org.jctools.queues.atomic.SpscAtomicArrayQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 enum class ProgramKind { TELEOP, AUTONOMOUS, UTILITY }
 
@@ -15,11 +17,14 @@ data class ProgramMetadata(
 /**
  * A reusable program definition. Dependencies are created only by [initialize].
  * [E] is the environment the host supplies at INIT, such as FTC hardware access.
+ *
+ * Setup may end with the program to run next, which chains programs: an autonomous that ends
+ * with its TeleOp hands off to it. Any other result means no next program.
  */
 class Program<E, D> internal constructor(
     val metadata: ProgramMetadata,
     private val dependencies: ProgramScope<E>.() -> D,
-    private val setup: ProgramScope<E>.(D) -> Unit,
+    private val setup: ProgramScope<E>.(D) -> Any?,
 ) {
     val name: String get() = metadata.name
 
@@ -27,9 +32,10 @@ class Program<E, D> internal constructor(
      * Creates a session on the calling thread and runs dependency creation and setup once.
      * A failure runs registered cleanup before propagating the original error.
      *
-     * Each active tick advances Ivy's global scheduler, then every [Subsystem], then the program's
-     * own [ProgramScope.loop] callbacks. STOP runs the program's cleanup, returns subsystems to their
-     * initial modes, and finally clears the scheduler.
+     * Every tick first samples each [Button]. An INIT tick then runs [ProgramScope.initLoop] callbacks.
+     * An active tick runs button actions, advances Ivy's global scheduler, updates every [Subsystem],
+     * and runs the program's own [ProgramScope.loop] callbacks. STOP runs the program's cleanup,
+     * returns subsystems to their initial modes, and finally clears the scheduler.
      */
     fun initialize(environment: E): OpModeSession {
         Scheduler.reset()
@@ -39,10 +45,14 @@ class Program<E, D> internal constructor(
         session.guard {
             scope.onStop { Scheduler.reset() }
             scope.onStop { scope.resetSubsystems() }
+            // Runs before subsystems reset: readers stop first.
+            scope.onStop { scope.stopBackground() }
+            scope.initLoop { scope.updateButtons(dispatch = false) }
+            scope.loop { scope.updateButtons(dispatch = true) }
             scope.loop { Scheduler.execute() }
             scope.loop { scope.updateSubsystems() }
             val graph = scope.dependencies()
-            scope.setup(graph)
+            session.chained = scope.setup(graph) as? Program<*, *>
         }
         scope.finishSetup()
         return session
@@ -54,7 +64,7 @@ fun <E, D> teleop(
     group: String = "",
     description: String = "",
     dependencies: ProgramScope<E>.() -> D,
-    setup: ProgramScope<E>.(D) -> Unit,
+    setup: ProgramScope<E>.(D) -> Any?,
 ): Program<E, D> = Program(ProgramMetadata(name, ProgramKind.TELEOP, group, description), dependencies, setup)
 
 fun <E, D> autonomous(
@@ -62,7 +72,7 @@ fun <E, D> autonomous(
     group: String = "",
     description: String = "",
     dependencies: ProgramScope<E>.() -> D,
-    setup: ProgramScope<E>.(D) -> Unit,
+    setup: ProgramScope<E>.(D) -> Any?,
 ): Program<E, D> = Program(ProgramMetadata(name, ProgramKind.AUTONOMOUS, group, description), dependencies, setup)
 
 fun <E, D> utility(
@@ -70,7 +80,7 @@ fun <E, D> utility(
     group: String = "",
     description: String = "",
     dependencies: ProgramScope<E>.() -> D,
-    setup: ProgramScope<E>.(D) -> Unit,
+    setup: ProgramScope<E>.(D) -> Any?,
 ): Program<E, D> = Program(ProgramMetadata(name, ProgramKind.UTILITY, group, description), dependencies, setup)
 
 /**
@@ -90,6 +100,8 @@ class ProgramScope<out E> internal constructor(
     internal val tickCallbacks = mutableListOf<() -> Unit>()
     internal val stopCallbacks = mutableListOf<() -> Unit>()
     private val subsystems = mutableListOf<Subsystem<*>>()
+    private val buttons = mutableListOf<Button>()
+    @Volatile internal var stopped = false
 
     /** Runs on every update before START, in registration order. */
     fun initLoop(callback: () -> Unit) = register(initCallbacks, callback)
@@ -108,6 +120,64 @@ class ProgramScope<out E> internal constructor(
 
     internal fun register(subsystem: Subsystem<*>) {
         subsystems += subsystem
+    }
+
+    private val background = mutableListOf<Latest<*>>()
+
+    internal fun startBackground(latest: Latest<*>) {
+        check(!stopped) { "The session has stopped" }
+        background += latest
+        latest.start()
+    }
+
+    internal fun stopBackground() {
+        for (latest in background) latest.stop()
+        background.clear()
+    }
+
+    internal fun join(button: Button) {
+        checkThread()
+        buttons += button
+    }
+
+    // Changes the host reports from its one input thread, applied on this thread at the next update.
+    // A bounded circular buffer of preallocated changes: reporting allocates nothing.
+    private val posted = SpscAtomicArrayQueue<Button.Change>(POSTED_CAPACITY)
+    // Set when the buffer was full; the next update then applies each button's latest reported state.
+    private val overflowed = AtomicBoolean()
+    private val changes = ArrayList<Button>()
+    private val pressed = ArrayList<Boolean>()
+
+    internal fun post(button: Button, down: Boolean) {
+        if (stopped) return
+        button.reported = down
+        if (!posted.offer(if (down) button.pressChange else button.releaseChange)) overflowed.set(true)
+    }
+
+    /** Applies reported changes in arrival order, then checks condition buttons, then runs actions. */
+    internal fun updateButtons(dispatch: Boolean) {
+        changes.clear()
+        pressed.clear()
+        // Buttons created during an update join the list; index iteration picks them up.
+        var index = 0
+        while (index < buttons.size) buttons[index++].clearEdges()
+        val overflow = overflowed.getAndSet(false)
+        while (true) {
+            val change = posted.poll() ?: break
+            change.button.apply(change.down)?.let { changes += change.button; pressed += it }
+        }
+        index = 0
+        while (index < buttons.size) {
+            val button = buttons[index++]
+            (if (overflow) button.catchUp() else null)?.let { changes += button; pressed += it }
+            button.check()?.let { changes += button; pressed += it }
+        }
+        if (!dispatch) return
+        index = 0
+        while (!stopped && index < changes.size) {
+            changes[index].run(pressed[index]) { !stopped }
+            index++
+        }
     }
 
     // Subsystems created during an update join the list; index iteration picks them up.
@@ -131,6 +201,9 @@ class ProgramScope<out E> internal constructor(
     internal companion object {
         /** The session running on this thread, from INIT until STOP. */
         val current = ThreadLocal<ProgramScope<*>>()
+
+        /** Reported changes one update can hold, far more than a Driver Station sends between updates. */
+        const val POSTED_CAPACITY = 256
     }
 
     internal fun checkThread() {
@@ -141,9 +214,13 @@ class ProgramScope<out E> internal constructor(
         configuring = false
     }
 
-    private fun register(callbacks: MutableList<() -> Unit>, callback: () -> Unit) {
+    internal fun checkConfiguring(what: String) {
         checkThread()
-        check(configuring) { "Register lifecycle callbacks during dependency creation or setup" }
+        check(configuring) { "$what during dependency creation or setup" }
+    }
+
+    private fun register(callbacks: MutableList<() -> Unit>, callback: () -> Unit) {
+        checkConfiguring("Register lifecycle callbacks")
         callbacks += callback
     }
 }
@@ -158,6 +235,18 @@ enum class SessionState { INIT, ACTIVE, STOPPED }
 class OpModeSession internal constructor(private val scope: ProgramScope<*>) {
     private var currentState = SessionState.INIT
     private var dispatching = false
+    private var started = false
+    internal var chained: Program<*, *>? = null
+
+    /**
+     * The program setup ended with, for the host to initialize after this session stops.
+     * Null until STOP, and null if the session stopped before START.
+     */
+    val next: Program<*, *>?
+        get() {
+            scope.checkThread()
+            return if (currentState == SessionState.STOPPED && started) chained else null
+        }
 
     val state: SessionState
         get() {
@@ -184,6 +273,7 @@ class OpModeSession internal constructor(private val scope: ProgramScope<*>) {
         check(!dispatching) { "Do not call start or tick from lifecycle callbacks" }
         if (state != SessionState.INIT) return
         currentState = SessionState.ACTIVE
+        started = true
         dispatch(scope.startCallbacks)
     }
 
@@ -221,6 +311,7 @@ class OpModeSession internal constructor(private val scope: ProgramScope<*>) {
         scope.checkThread()
         if (state == SessionState.STOPPED) return
         currentState = SessionState.STOPPED
+        scope.stopped = true
         if (ProgramScope.current.get() === scope) ProgramScope.current.remove()
         scope.finishSetup()
         var failure: Throwable? = null

@@ -19,13 +19,17 @@ import com.qualcomm.robotcore.hardware.HardwareDevice
 import com.qualcomm.robotcore.hardware.HardwareMap
 import com.qualcomm.robotcore.hardware.IMU
 import com.qualcomm.robotcore.hardware.Servo
+import com.qualcomm.robotcore.hardware.VoltageSensor
 import com.qualcomm.robotcore.util.RobotLog
 
 /**
  * Typed access to devices declared in a [RobotConfig], for one session.
  * `hardware(RobotMap.liftLeft)` returns the SDK type for that device's role.
  */
-class Hardware internal constructor(private val map: HardwareMap) {
+class Hardware internal constructor(
+    /** The SDK hardware map, for libraries that find devices by name, such as Pedro's `Constants.create`. */
+    val map: HardwareMap,
+) {
     @JvmName("motor") operator fun invoke(device: Device<Role.Motor>): DcMotorEx = lookup(device)
     @JvmName("servo") operator fun invoke(device: Device<Role.Servo>): Servo = lookup(device)
     @JvmName("crServo") operator fun invoke(device: Device<Role.CrServo>): CRServo = lookup(device)
@@ -36,6 +40,9 @@ class Hardware internal constructor(private val map: HardwareMap) {
     @JvmName("otos") operator fun invoke(device: Device<Role.Otos>): SparkFunOTOS = lookup(device)
     @JvmName("color") operator fun invoke(device: Device<Role.ColorSensorV3>): RevColorSensorV3 = lookup(device)
     @JvmName("distance") operator fun invoke(device: Device<Role.Distance2m>): Rev2mDistanceSensor = lookup(device)
+
+    /** The main battery, which every configuration has without declaring it. */
+    val battery: VoltageSensor get() = map.voltageSensor.iterator().next()
 
     @Suppress("UNCHECKED_CAST")
     private fun <T> lookup(device: Device<*>): T = map.get(sdkType(device.role), device.name) as T
