@@ -8,7 +8,7 @@ The build generates the FTC robot configuration from it, the Robot Controller ac
 Put one `RobotConfig` object in `TeamCode/src/hardware/kotlin`:
 
 ```kotlin
-object Apex : RobotConfig("apex") {
+object RobotMap : RobotConfig("apex") {
     private val control = controlHub()
     private val expansion = expansionHub(address = 2)
 
@@ -29,15 +29,15 @@ These sources are compiled for the build machine as well as the robot, so they c
 
 ## Use the devices
 
-`FtcEnvironment.hardware` resolves a declared device to its SDK type: `hardware[Apex.frontLeft]` is a `DcMotorEx`, and `hardware[Apex.pinpoint]` is a `GoBildaPinpointDriver`.
-A subsystem receives `Hardware` from the session graph and resolves only the devices it owns.
+`hardware` resolves a declared device to its SDK type: `hardware(RobotMap.frontLeft)` is a `DcMotorEx`, and `hardware(RobotMap.pinpoint)` is a `GoBildaPinpointDriver`.
+It works on the OpMode thread while an OpMode runs. A subsystem resolves only the devices it owns, in its constructor defaults.
 A mistyped device is a compile error.
 
 Register programs with the configuration. Every INIT then checks that the active configuration contains each declared device, and fails with one message listing any that are missing:
 
 ```kotlin
 @OpModeRegistrar
-fun registerOpModes(manager: OpModeManager) = registerPrograms(manager, Apex, main)
+fun registerOpModes(manager: OpModeManager) = registerPrograms(manager, RobotMap, main)
 ```
 
 ## Build

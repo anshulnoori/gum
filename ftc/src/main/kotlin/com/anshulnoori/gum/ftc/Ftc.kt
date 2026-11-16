@@ -10,14 +10,17 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode
 import com.qualcomm.robotcore.eventloop.opmode.OpModeManager
 import com.qualcomm.robotcore.hardware.Gamepad
 import com.qualcomm.robotcore.hardware.HardwareMap
+import com.qualcomm.robotcore.hardware.VoltageSensor
 import org.firstinspires.ftc.robotcore.external.Telemetry
 import org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta
+import kotlin.properties.ReadOnlyProperty
+import kotlin.reflect.KProperty
 import com.anshulnoori.gum.core.autonomous as coreAutonomous
 import com.anshulnoori.gum.core.teleop as coreTeleop
 import com.anshulnoori.gum.core.utility as coreUtility
 
 /**
- * FTC objects for one OpMode session. Hardware lookups belong in the dependency factory.
+ * FTC objects for one OpMode session.
  * Gamepads are the SDK's live objects; controller events are not implemented yet.
  */
 class FtcEnvironment internal constructor(
@@ -29,39 +32,63 @@ class FtcEnvironment internal constructor(
     val gamepad2: Gamepad,
 )
 
-typealias FtcProgram<D> = Program<FtcEnvironment, D>
+typealias FtcProgram = Program<FtcEnvironment, Robot>
 typealias FtcScope = ProgramScope<FtcEnvironment>
 
-fun <D> teleop(
-    name: String,
-    group: String = "",
-    description: String = "",
-    dependencies: FtcScope.() -> D,
-    setup: FtcScope.(D) -> Unit,
-): FtcProgram<D> = coreTeleop(name, group, description, dependencies, setup)
+/**
+ * One session's subsystems. TeamCode declares each subsystem once, as an extension property:
+ * `val Robot.intake by subsystem(::Intake)`. Its first use in a session creates it.
+ */
+class Robot internal constructor(private val hardwareMap: HardwareMap) {
+    /** The main battery. */
+    val battery: VoltageSensor by lazy { hardwareMap.voltageSensor.iterator().next() }
 
-fun <D> autonomous(
-    name: String,
-    group: String = "",
-    description: String = "",
-    dependencies: FtcScope.() -> D,
-    setup: FtcScope.(D) -> Unit,
-): FtcProgram<D> = coreAutonomous(name, group, description, dependencies, setup)
+    internal val subsystems = HashMap<Any, Any>()
+}
 
-fun <D> utility(
+/** Declares a subsystem of [Robot]; each session gets its own instance from [create]. */
+fun <T : Any> subsystem(create: () -> T): ReadOnlyProperty<Robot, T> = object : ReadOnlyProperty<Robot, T> {
+    @Suppress("UNCHECKED_CAST")
+    override fun getValue(thisRef: Robot, property: KProperty<*>): T =
+        thisRef.subsystems.getOrPut(this) { create() } as T
+}
+
+private val currentHardware = ThreadLocal<Hardware>()
+
+/**
+ * Devices declared in the registered [RobotConfig], for the OpMode running on this thread:
+ * `hardware(RobotMap.intakeLeft)`. Subsystems use it for their constructor defaults.
+ */
+val hardware: Hardware
+    get() = checkNotNull(currentHardware.get()) { "Use hardware while an OpMode runs, on the OpMode thread" }
+
+fun teleop(
     name: String,
     group: String = "",
     description: String = "",
-    dependencies: FtcScope.() -> D,
-    setup: FtcScope.(D) -> Unit,
-): FtcProgram<D> = coreUtility(name, group, description, dependencies, setup)
+    setup: FtcScope.(Robot) -> Unit,
+): FtcProgram = coreTeleop(name, group, description, { Robot(environment.hardwareMap) }, setup)
+
+fun autonomous(
+    name: String,
+    group: String = "",
+    description: String = "",
+    setup: FtcScope.(Robot) -> Unit,
+): FtcProgram = coreAutonomous(name, group, description, { Robot(environment.hardwareMap) }, setup)
+
+fun utility(
+    name: String,
+    group: String = "",
+    description: String = "",
+    setup: FtcScope.(Robot) -> Unit,
+): FtcProgram = coreUtility(name, group, description, { Robot(environment.hardwareMap) }, setup)
 
 /**
  * Registers programs with the FTC SDK. Call it from a TeamCode method annotated with
  * `@OpModeRegistrar`, which the SDK discovers when the Robot Controller app starts.
  * Each INIT first checks that the active configuration has every device [config] declares.
  */
-fun registerPrograms(manager: OpModeManager, config: RobotConfig, vararg programs: FtcProgram<*>) {
+fun registerPrograms(manager: OpModeManager, config: RobotConfig, vararg programs: FtcProgram) {
     for (program in programs) {
         val metadata = program.metadata
         val flavor = when (metadata.kind) {
@@ -86,7 +113,7 @@ fun registerPrograms(manager: OpModeManager, config: RobotConfig, vararg program
  *
  * Gum owns bulk reads: every hub uses manual caching, cleared once before each dispatch.
  */
-private class GumOpMode(private val config: RobotConfig, private val program: FtcProgram<*>) : OpMode() {
+private class GumOpMode(private val config: RobotConfig, private val program: FtcProgram) : OpMode() {
     private var session: OpModeSession? = null
     private var hubs: List<LynxModule> = emptyList()
 
@@ -94,7 +121,13 @@ private class GumOpMode(private val config: RobotConfig, private val program: Ft
         val hardware = Hardware(hardwareMap).apply { requireDevices(config) }
         hubs = hardwareMap.getAll(LynxModule::class.java)
         hubs.forEach { it.bulkCachingMode = LynxModule.BulkCachingMode.MANUAL }
-        session = program.initialize(FtcEnvironment(hardware, hardwareMap, telemetry, gamepad1, gamepad2))
+        currentHardware.set(hardware)
+        try {
+            session = program.initialize(FtcEnvironment(hardware, hardwareMap, telemetry, gamepad1, gamepad2))
+        } catch (error: Throwable) {
+            currentHardware.remove()
+            throw error
+        }
     }
 
     override fun init_loop() {
@@ -116,7 +149,11 @@ private class GumOpMode(private val config: RobotConfig, private val program: Ft
         val current = session
         session = null
         hubs = emptyList()
-        current?.stop()
+        try {
+            current?.stop()
+        } finally {
+            currentHardware.remove()
+        }
     }
 
     private fun clearBulkCache() = hubs.forEach { it.clearBulkCache() }

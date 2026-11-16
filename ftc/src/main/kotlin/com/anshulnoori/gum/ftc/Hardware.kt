@@ -23,19 +23,19 @@ import com.qualcomm.robotcore.util.RobotLog
 
 /**
  * Typed access to devices declared in a [RobotConfig], for one session.
- * `hardware[Apex.liftLeft]` returns the SDK type for that device's role.
+ * `hardware(RobotMap.liftLeft)` returns the SDK type for that device's role.
  */
 class Hardware internal constructor(private val map: HardwareMap) {
-    @JvmName("motor") operator fun get(device: Device<Role.Motor>): DcMotorEx = lookup(device)
-    @JvmName("servo") operator fun get(device: Device<Role.Servo>): Servo = lookup(device)
-    @JvmName("crServo") operator fun get(device: Device<Role.CrServo>): CRServo = lookup(device)
-    @JvmName("digital") operator fun get(device: Device<Role.Digital>): DigitalChannel = lookup(device)
-    @JvmName("analog") operator fun get(device: Device<Role.Analog>): AnalogInput = lookup(device)
-    @JvmName("imu") operator fun get(device: Device<Role.Imu>): IMU = lookup(device)
-    @JvmName("pinpoint") operator fun get(device: Device<Role.Pinpoint>): GoBildaPinpointDriver = lookup(device)
-    @JvmName("otos") operator fun get(device: Device<Role.Otos>): SparkFunOTOS = lookup(device)
-    @JvmName("color") operator fun get(device: Device<Role.ColorSensorV3>): RevColorSensorV3 = lookup(device)
-    @JvmName("distance") operator fun get(device: Device<Role.Distance2m>): Rev2mDistanceSensor = lookup(device)
+    @JvmName("motor") operator fun invoke(device: Device<Role.Motor>): DcMotorEx = lookup(device)
+    @JvmName("servo") operator fun invoke(device: Device<Role.Servo>): Servo = lookup(device)
+    @JvmName("crServo") operator fun invoke(device: Device<Role.CrServo>): CRServo = lookup(device)
+    @JvmName("digital") operator fun invoke(device: Device<Role.Digital>): DigitalChannel = lookup(device)
+    @JvmName("analog") operator fun invoke(device: Device<Role.Analog>): AnalogInput = lookup(device)
+    @JvmName("imu") operator fun invoke(device: Device<Role.Imu>): IMU = lookup(device)
+    @JvmName("pinpoint") operator fun invoke(device: Device<Role.Pinpoint>): GoBildaPinpointDriver = lookup(device)
+    @JvmName("otos") operator fun invoke(device: Device<Role.Otos>): SparkFunOTOS = lookup(device)
+    @JvmName("color") operator fun invoke(device: Device<Role.ColorSensorV3>): RevColorSensorV3 = lookup(device)
+    @JvmName("distance") operator fun invoke(device: Device<Role.Distance2m>): Rev2mDistanceSensor = lookup(device)
 
     @Suppress("UNCHECKED_CAST")
     private fun <T> lookup(device: Device<*>): T = map.get(sdkType(device.role), device.name) as T

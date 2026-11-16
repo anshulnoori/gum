@@ -1,5 +1,7 @@
 package com.anshulnoori.gum.core
 
+import com.pedropathing.ivy.Scheduler
+
 enum class ProgramKind { TELEOP, AUTONOMOUS, UTILITY }
 
 /** Host-facing metadata. It does not affect lifecycle behavior. */
@@ -24,11 +26,21 @@ class Program<E, D> internal constructor(
     /**
      * Creates a session on the calling thread and runs dependency creation and setup once.
      * A failure runs registered cleanup before propagating the original error.
+     *
+     * Each active tick advances Ivy's global scheduler, then every [Subsystem], then the program's
+     * own [ProgramScope.loop] callbacks. STOP runs the program's cleanup, returns subsystems to their
+     * initial modes, and finally clears the scheduler.
      */
     fun initialize(environment: E): OpModeSession {
+        Scheduler.reset()
         val scope = ProgramScope(environment)
         val session = OpModeSession(scope)
+        ProgramScope.current.set(scope)
         session.guard {
+            scope.onStop { Scheduler.reset() }
+            scope.onStop { scope.resetSubsystems() }
+            scope.loop { Scheduler.execute() }
+            scope.loop { scope.updateSubsystems() }
             val graph = scope.dependencies()
             scope.setup(graph)
         }
@@ -65,6 +77,7 @@ fun <E, D> utility(
  * Registration is permitted only during dependency creation and setup, on the initializing thread.
  * Register resource cleanup immediately after acquisition, including within a dependency factory.
  * Callbacks must not block waiting for physical motion.
+ * Schedule Ivy commands from START or later; Ivy starts a command as soon as it is scheduled.
  */
 class ProgramScope<out E> internal constructor(
     /** The host environment for this session. Do not retain it beyond the session. */
@@ -76,18 +89,49 @@ class ProgramScope<out E> internal constructor(
     internal val startCallbacks = mutableListOf<() -> Unit>()
     internal val tickCallbacks = mutableListOf<() -> Unit>()
     internal val stopCallbacks = mutableListOf<() -> Unit>()
+    private val subsystems = mutableListOf<Subsystem<*>>()
 
-    /** Runs on host ticks before START, in registration order. */
-    fun onInitTick(callback: () -> Unit) = register(initCallbacks, callback)
+    /** Runs on every update before START, in registration order. */
+    fun initLoop(callback: () -> Unit) = register(initCallbacks, callback)
 
     /** Runs once when the host signals START. */
     fun onStart(callback: () -> Unit) = register(startCallbacks, callback)
 
-    /** Runs on host ticks after START, in registration order. */
-    fun onTick(callback: () -> Unit) = register(tickCallbacks, callback)
+    /** Runs on every update after START, in registration order, after commands and subsystems. */
+    fun loop(callback: () -> Unit) = register(tickCallbacks, callback)
 
-    /** Runs once on shutdown, in reverse registration order, including after setup failure. */
+    /**
+     * Runs once on shutdown, in reverse registration order, including after setup failure.
+     * Ivy commands still scheduled at STOP are dropped without their `end` callback.
+     */
     fun onStop(callback: () -> Unit) = register(stopCallbacks, callback)
+
+    internal fun register(subsystem: Subsystem<*>) {
+        subsystems += subsystem
+    }
+
+    // Subsystems created during an update join the list; index iteration picks them up.
+    internal fun updateSubsystems() {
+        var index = 0
+        while (index < subsystems.size) subsystems[index++].update()
+    }
+
+    internal fun resetSubsystems() {
+        var failure: Throwable? = null
+        for (subsystem in subsystems.asReversed()) {
+            try {
+                subsystem.reset()
+            } catch (error: Throwable) {
+                if (failure == null) failure = error else failure.addSuppressed(error)
+            }
+        }
+        failure?.let { throw it }
+    }
+
+    internal companion object {
+        /** The session running on this thread, from INIT until STOP. */
+        val current = ThreadLocal<ProgramScope<*>>()
+    }
 
     internal fun checkThread() {
         check(Thread.currentThread() === owner) { "Use the thread that initialized this session" }
@@ -177,6 +221,7 @@ class OpModeSession internal constructor(private val scope: ProgramScope<*>) {
         scope.checkThread()
         if (state == SessionState.STOPPED) return
         currentState = SessionState.STOPPED
+        if (ProgramScope.current.get() === scope) ProgramScope.current.remove()
         scope.finishSetup()
         var failure: Throwable? = null
         for (callback in scope.stopCallbacks.asReversed()) {

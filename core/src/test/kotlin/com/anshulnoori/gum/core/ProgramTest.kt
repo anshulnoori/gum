@@ -60,9 +60,9 @@ class ProgramTest {
     fun `host gates active callbacks until START and STOP prevents further callbacks`() {
         val events = mutableListOf<String>()
         val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
-            onInitTick { events += "init" }
+            initLoop { events += "init" }
             onStart { events += "start" }
-            onTick { events += "active" }
+            loop { events += "active" }
             onStop { events += "stop" }
         }.initialize(Unit)
 
@@ -143,9 +143,9 @@ class ProgramTest {
             val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
                 onStop { events += "cleanup" }
                 when (phase) {
-                    "init" -> { onInitTick(fail); onInitTick { events += "unexpected" } }
+                    "init" -> { initLoop(fail); initLoop { events += "unexpected" } }
                     "start" -> { onStart(fail); onStart { events += "unexpected" } }
-                    "active" -> { onTick(fail); onTick { events += "unexpected" } }
+                    "active" -> { loop(fail); loop { events += "unexpected" } }
                 }
             }.initialize(Unit)
 
@@ -166,8 +166,8 @@ class ProgramTest {
         val events = mutableListOf<String>()
         lateinit var session: OpModeSession
         session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
-            onTick { events += "first"; session.stop() }
-            onTick { events += "unexpected" }
+            loop { events += "first"; session.stop() }
+            loop { events += "unexpected" }
             onStop { events += "stop" }
         }.initialize(Unit)
         session.start()
@@ -179,7 +179,7 @@ class ProgramTest {
     fun `callback registration closes when setup returns including after STOP`() {
         lateinit var scope: ProgramScope<Unit>
         val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) { scope = this }.initialize(Unit)
-        assertFailsWith<IllegalStateException> { scope.onTick {} }
+        assertFailsWith<IllegalStateException> { scope.loop {} }
         session.stop()
         assertFailsWith<IllegalStateException> { scope.onStop {} }
     }
@@ -209,7 +209,7 @@ class ProgramTest {
         val events = mutableListOf<String>()
         lateinit var session: OpModeSession
         session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
-            onTick { session.tick() }
+            loop { session.tick() }
             onStop { events += "stop" }
         }.initialize(Unit)
         session.start()

@@ -33,7 +33,7 @@ Do not create fake Ivy or KStateMachine runtimes as substitutes for their actual
 
 Status: Android assembly verified; device evidence missing.
 FTC SDK 12.0.0, AGP 8.13.2, Gradle 9.1.0, Kotlin 2.3.20, and Metro 1.5.2 assemble the apex-2026 debug APK with a Metro session graph.
-Metro 1.5.2 needs Gradle to run on JDK 21 or newer and inlines Java 11 bytecode, so consumers target Java 11.
+Metro 1.5.2 needs Gradle to run on JDK 21 or newer and inlines Java 11 bytecode. [ADR 0003](adr/0003-gum-owned-subsystems-and-robot.md) later removed Metro.
 A minimal FTC host, part of slice 6, registers programs through `@OpModeRegistrar` without Sloth.
 
 Create the smallest FTC consumer plus a JVM-testable lifecycle module.
@@ -51,6 +51,18 @@ Require each command to observe its own operation outcome.
 
 Validate Ivy reentrant schedule/cancel behavior with its actual dependency.
 Resolve scheduler mutation and cleanup policy before controller callbacks schedule arbitrary work.
+
+Status: partly implemented with an intake (two motors, modes Off, Collecting, Ejecting) in apex-2026.
+Sessions drive Ivy 1.1.1's scheduler: see [Ivy commands](lifecycle.md#ivy-commands).
+Gum's `Subsystem` builds a KStateMachine 0.38.1 machine from an enum of modes and an optional `transitions` block; see [subsystems](lifecycle.md#subsystems).
+Commands request a mode and finish once it is entered; disallowed requests leave the mode unchanged, and automatic moves run after Ivy each update.
+JVM tests drive real Ivy and KStateMachine, including the intake with fake motors.
+Faults, timeouts, holding a target, nested modes, and an outcome type that reports rejection remain for a mechanism with feedback, such as a lift.
+
+Ivy 1.1.1 reentrancy, observed against the real dependency:
+a command interrupted by a command scheduled during `Scheduler.execute()` still runs `execute()` once more in that pass, after its `end(INTERRUPTED)`.
+Commands scheduled from Gum tick callbacks run outside that pass and avoid this.
+Slice 4 should deliver controller events the same way.
 
 ## 4. Add controller events and group ownership
 
@@ -72,7 +84,7 @@ Do not infer success from Ivy's natural end reason alone.
 Register TeleOp, autonomous, and utility descriptors through the selected Sloth interface.
 Keep hardware construction out of class initialization and scanning.
 Verify names/groups and record where descriptions appear.
-Reload changed TeamCode and generated Metro code between sessions.
+Reload changed TeamCode between sessions.
 Verify the next session uses new classes and retains no old graphs or callbacks.
 Exercise dynamic successor initialization on the selected FTC SDK.
 

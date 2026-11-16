@@ -3,7 +3,7 @@
 Gum v2 is a Kotlin-first framework for FIRST Tech Challenge robot programs.
 It connects functional OpModes, lifecycle-scoped dependency injection, controller events, and state-machine subsystems.
 
-**Status: the JVM lifecycle, a minimal FTC host, and hardware configuration from code are implemented. They compile into an FTC SDK 12.0 app but have not run on a robot. Ivy, KStateMachine, controller events, handoff, and Sloth are not integrated, and no artifact is published.**
+**Status: the JVM lifecycle, a minimal FTC host, hardware configuration from code, and Ivy scheduling are implemented, and apex-2026 runs a KStateMachine intake on them. They compile into an FTC SDK 12.0 app but have not run on a robot. Operation outcomes, controller events, handoff, and Sloth are not implemented, and no artifact is published.**
 
 This repository starts with independent Git history. The previous implementation remains in [old-gum](https://github.com/anshulnoori/old-gum).
 
@@ -11,7 +11,7 @@ This repository starts with independent Git history. The previous implementation
 
 - Ivy owns commands, composition, and subsystem reservations.
 - KStateMachine owns subsystem state machines.
-- Metro is the provisional compile-time DI choice, pending compatibility tests.
+- Gum builds subsystem state machines and creates subsystems per session; see [ADR 0003](docs/adr/0003-gum-owned-subsystems-and-robot.md).
 - OpModes are values whose setup bodies configure behavior. Gum owns execution.
 - Sloth supplies development reload and registration integration.
 - Coroutines are optional. The control loop does not launch subsystem jobs on a thread pool.
@@ -40,7 +40,7 @@ Run `./gradlew :hardware:test` for the hardware configuration.
 The Gradle plugin in `gradle-plugin/` is a separate build that FTC apps include through `pluginManagement`.
 
 The wrapper pins Gradle 9.1.0 and verifies its distribution checksum.
-The modules use Kotlin 2.3.20 and target Java 8 bytecode. `:ftc` uses AGP 8.13.2 and compiles against FTC SDK 12.0.0.
+The modules use Kotlin 2.3.20 and Ivy 1.1.1. `:core` targets Java 17 bytecode because KStateMachine 0.38.1 does; the other modules target Java 8. `:ftc` uses AGP 8.13.2 and compiles against FTC SDK 12.0.0.
 Consumers can build Gum from source with a Gradle `includeBuild`; the [apex-2026](https://ampcode.com/@anshulnoori/apex-2026) robot does this.
 
 In a Debian-based orb, `.agents/setup` installs JDK 17 and runs the tests.

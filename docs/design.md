@@ -26,7 +26,7 @@ The first event date, robot hardware, and performance targets remain unknown.
 | Subsystem | Hardware ownership, control algorithms, valid operations, readiness, faults, safe responses |
 | Sloth | Development class reload and registration facilities |
 
-Metro is the provisional DI library. KSP is not a requirement.
+Gum creates subsystems per session and builds their state machines ([ADR 0003](adr/0003-gum-owned-subsystems-and-robot.md)). KSP is not a requirement.
 Kotlinx.coroutines is the optional coroutine library, not the control clock.
 No dependency versions are frozen until a consumer application compiles and the relevant contracts pass tests.
 
@@ -175,7 +175,7 @@ No target frequency or fastest-library claim is accepted without representative 
 - A rejected Ivy command can lack a terminal callback.
 - Ivy suspension is not terminal completion.
 - Natural Ivy completion is not necessarily operation success.
-- Metro-generated graphs and program registrars must reload with TeamCode.
+- Program registrars must reload with TeamCode.
 - Stable objects must release references to previous reload classloaders.
 - Dependency changes can require a full APK install rather than Sloth reload.
 
@@ -187,7 +187,6 @@ Research is not permission to run development services during matches.
 
 - A custom coroutine language, command scheduler, statechart engine, or DI compiler
 - Automatic injection into annotated top-level OpMode functions
-- A mandatory new subsystem DSL
 - Automatic TeleOp START after autonomous completion
 - Undocumented runtime performance guarantees
 - A motion-library migration before adapter requirements and hardware are known
@@ -195,7 +194,7 @@ Research is not permission to run development services during matches.
 ## Decisions still required
 
 - First event date, robot hardware, team workflow, and measurable reliability targets
-- Compatible FTC/Kotlin/Gradle/Metro/Sloth/Ivy/KStateMachine versions
+- Compatible FTC/Kotlin/Gradle/Sloth/Ivy/KStateMachine versions
 - Public lifecycle test interfaces and the dependency/cleanup contract
 - Exact update order and reentrant schedule/cancel policy
 - Command outcome propagation and conflict defaults
