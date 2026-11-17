@@ -17,6 +17,7 @@ import com.pedropathing.paths.interpolator.Interpolator
 import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertSame
 
 class PedroDriveTest {
@@ -47,9 +48,9 @@ class PedroDriveTest {
             else -> null
         }
     }
-    private val algorithm = fake<Algorithm> { name, _ ->
+    private val algorithm = fake<Algorithm> { name, args ->
         when (name) {
-            "calculateHold" -> DrivePowers.zero()
+            "calculateHold" -> { (args[1] as Pose).let { calls += "hold at ${it.x()},${it.y()}" }; DrivePowers.zero() }
             "isBusy" -> true
             "atParametricEnd" -> false
             else -> null
@@ -81,6 +82,39 @@ class PedroDriveTest {
         session.stop()
         assertEquals(PedroDrive.State.IDLE, drive.state)
         assertEquals(listOf("stop"), calls)
+    }
+
+    @Test
+    fun `a cancelled drive stops the drivetrain, and a cancelled follow holds where the robot is`() {
+        val path = AtomicPath(Line(Pose(0.0, 0.0, 0.0), Pose(24.0, 0.0, 0.0)), Interpolator.constant(0.0), emptyList())
+        lateinit var drive: PedroDrive
+        val session = teleop<Unit, PedroDrive>("Drive", dependencies = { PedroDrive(Follower(localizer, drivetrain, algorithm)) }) {
+            drive = it
+        }.initialize(Unit)
+        session.start()
+
+        val sticks = drive.drive({ 1.0 }, { 0.0 }, { 0.0 })
+        sticks.schedule()
+        session.tick()
+        assertEquals(PedroDrive.State.DRIVER, drive.state)
+        calls.clear()
+        sticks.cancel()
+        session.tick()
+        assertEquals(PedroDrive.State.IDLE, drive.state)
+        assertEquals("stop", calls.last(), "the follower stops the drivetrain on its next update")
+        assertFalse("drive manual=true" in calls, "the cancelled drive no longer sends its powers")
+
+        val follow = drive.follow(path)
+        follow.schedule()
+        session.tick()
+        assertEquals(PedroDrive.State.FOLLOWING, drive.state)
+        calls.clear()
+        follow.cancel()
+        session.tick()
+        assertEquals(PedroDrive.State.HOLDING, drive.state)
+        assertEquals(listOf("localize", "hold at 12.0,34.0", "drive manual=false"), calls, "holds the pose the robot was at, not the path")
+        session.stop()
+        PanelsField.field.canvas = Canvas()
     }
 
     @Test

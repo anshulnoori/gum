@@ -4,7 +4,7 @@ import com.anshulnoori.gum.core.Subsystem
 import com.bylazar.field.PanelsField
 import com.pedropathing.follower.Follower
 import com.pedropathing.ivy.Command
-import com.pedropathing.ivy.pedro.PedroCommands
+import com.pedropathing.ivy.behaviors.EndCondition
 import com.pedropathing.math.Pose
 import com.pedropathing.paths.Path
 import kotlin.math.cos
@@ -20,8 +20,8 @@ import kotlin.math.sin
  * ```
  *
  * Gum updates the follower on every update after START, after commands. [state] mirrors the
- * follower's own mode. Paths run through Ivy's Pedro commands, which this subsystem reserves, so
- * a newer drive command interrupts an older one. STOP stops the drivetrain.
+ * follower's own mode. Its commands reserve this subsystem, so a newer drive command interrupts an
+ * older one. STOP stops the drivetrain.
  *
  * After START, it draws the robot and the path it follows on the Panels field, in Pedro's
  * coordinates, only on updates when Panels sends the field.
@@ -79,21 +79,56 @@ open class PedroDrive(val follower: Follower) : Subsystem<PedroDrive.State>(Stat
         const val PATH_COLOR = "#4CAF50"
     }
 
-    /** Follows [path] and finishes at its end; the follower then holds the end pose. */
-    fun follow(path: Path): Command = PedroCommands.follow(follower, path).requiring(this)
-
-    /** Holds [pose] and finishes at once; the follower keeps holding it. */
-    fun hold(pose: Pose): Command = PedroCommands.hold(follower, pose).requiring(this)
-
-    /** Holds the pose the robot is at when the command starts. */
-    fun holdHere(): Command = Command.build().requiring(this).setStart { follower.hold(follower.pose()) }.setDone { true }
+    // Each command below reports done only until it ends, as Gum's own commands do: Ivy 1.1.1 can
+    // reach an interrupted command again in the same update and would end it a second time.
 
     /**
-     * Drives from [forward], [lateral], and [turn], read every update, until interrupted:
+     * Follows [path] and finishes at its end; the follower then holds the end pose. If it is
+     * cancelled or interrupted first, the follower holds the pose the robot is at.
+     */
+    fun follow(path: Path): Command {
+        var ended = false
+        return Command.build()
+            .requiring(this)
+            .setStart { ended = false; follower.follow(path) }
+            .setDone { !ended && follower.atParametricEnd() }
+            .setEnd {
+                if (it == EndCondition.INTERRUPTED) follower.hold(follower.pose())
+                ended = it != EndCondition.SUSPENDED
+            }
+    }
+
+    /** Holds [pose] and finishes at once; the follower keeps holding it. */
+    fun hold(pose: Pose): Command = holdCommand { pose }
+
+    /** Holds the pose the robot is at when the command starts. */
+    fun holdHere(): Command = holdCommand { follower.pose() }
+
+    private fun holdCommand(pose: () -> Pose): Command {
+        var ended = false
+        return Command.build()
+            .requiring(this)
+            .setStart { ended = false; follower.hold(pose()) }
+            .setDone { !ended }
+            .setEnd { ended = it != EndCondition.SUSPENDED }
+    }
+
+    /**
+     * Drives from [forward], [lateral], and [turn], read every update, until cancelled or
+     * interrupted, and then stops the drivetrain:
      * `drive({ -gamepad1.leftStickY }, { -gamepad1.leftStickX }, { -gamepad1.rightStickX })`.
      */
     fun drive(forward: () -> Double, lateral: () -> Double, turn: () -> Double): Command {
+        var ended = false
         val set = { follower.manual(forward(), lateral(), turn()) }
-        return Command.build().requiring(this).setStart(set).setExecute(set).setDone { false }
+        return Command.build()
+            .requiring(this)
+            .setStart { ended = false; set() }
+            .setExecute { if (!ended) set() }
+            .setEnd {
+                if (it == EndCondition.SUSPENDED) return@setEnd
+                ended = true
+                follower.stop()
+            }
     }
 }

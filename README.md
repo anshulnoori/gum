@@ -16,7 +16,7 @@ This repository starts with independent Git history. The previous implementation
 - Sloth registers programs and supplies development reload.
 - Routines use Kotlin's built-in coroutines inside Ivy's update; slow sensors read on background threads. Only the OpMode thread writes outputs.
 - Gamepad input comes from the SDK's callback, not polling.
-- Pedro Pathing 3 drives through Ivy's Pedro commands; see the `pedro` module.
+- Pedro Pathing 3 drives through Ivy commands on a Pedro follower; see the `pedro` module.
 - Panels shows telemetry, the field, and live-tuned values; Gum sends to it after every update.
 - A program's setup can end with the next program; after the run stops, Gum initializes it without starting it.
 

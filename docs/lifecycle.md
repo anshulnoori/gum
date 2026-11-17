@@ -251,7 +251,8 @@ val main = teleop("Main") { robot ->
 ```
 
 - Gum updates the follower every update after START, after commands. `state` mirrors the follower's mode through automatic transitions: `IDLE`, `FOLLOWING`, `HOLDING`, or `DRIVER`.
-- `follow(path)` and `hold(pose)` are Ivy's Pedro commands (`com.pedropathing.ivy:pedro`) with the drive reserved, so a newer drive command interrupts an older one. `drive(...)` reads its suppliers every update until interrupted.
+- `follow(path)`, `hold(pose)`, `holdHere()`, and `drive(...)` reserve the drive, so a newer drive command interrupts an older one. `drive(...)` reads its suppliers every update.
+- A `drive(...)` that is cancelled or interrupted stops the drivetrain. A `follow(path)` that ends before its path does holds the pose the robot is at; one that finishes holds the path's end pose.
 - STOP stops the drivetrain. Pedro's device names should come from `RobotMap`, for example `RobotMap.frontLeft.name`.
 - After START, it draws the robot and the path it follows on the Panels field, in Pedro's coordinates. It draws only on updates when Panels sends the field.
 
