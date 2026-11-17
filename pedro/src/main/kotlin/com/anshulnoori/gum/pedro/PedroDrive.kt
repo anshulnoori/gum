@@ -19,35 +19,35 @@ import kotlin.math.sin
  * class Drive(follower: Follower = Constants.create(hardware.map)) : PedroDrive(follower)
  * ```
  *
- * Gum updates the follower on every update after START, after commands. [mode] mirrors the
+ * Gum updates the follower on every update after START, after commands. [state] mirrors the
  * follower's own mode. Paths run through Ivy's Pedro commands, which this subsystem reserves, so
  * a newer drive command interrupts an older one. STOP stops the drivetrain.
  *
  * After START, it draws the robot and the path it follows on the Panels field, in Pedro's
  * coordinates, only on updates when Panels sends the field.
  */
-open class PedroDrive(val follower: Follower) : Subsystem<PedroDrive.Mode>(Mode.IDLE) {
-    enum class Mode { IDLE, FOLLOWING, HOLDING, DRIVER }
+open class PedroDrive(val follower: Follower) : Subsystem<PedroDrive.State>(State.IDLE) {
+    enum class State { IDLE, FOLLOWING, HOLDING, DRIVER }
 
-    // Commands change the follower; Gum moves to match it on the next update.
-    final override val transitions = transitions {
-        anyMode to Mode.IDLE whenever { follower.idle() }
-        anyMode to Mode.FOLLOWING whenever { follower.following() }
-        anyMode to Mode.HOLDING whenever { follower.holding() }
-        anyMode to Mode.DRIVER whenever { follower.manual() }
+    // Commands change the follower; Gum transitions to match it on the next update.
+    final override val automatic = automatic {
+        anyState to State.IDLE whenever { follower.idle() }
+        anyState to State.FOLLOWING whenever { follower.following() }
+        anyState to State.HOLDING whenever { follower.holding() }
+        anyState to State.DRIVER whenever { follower.manual() }
     }
 
     /** The follower's current pose. */
     val pose: Pose get() = follower.pose()
 
-    override fun enter(mode: Mode) {
-        if (mode == Mode.IDLE) {
+    override fun onEntry(state: State) {
+        if (state == State.IDLE) {
             follower.stop()
             follower.drivetrain.stop()
         }
     }
 
-    override fun loop(mode: Mode) {
+    override fun during(state: State) {
         follower.update()
         if (PanelsField.field.shouldUpdateCanvas) draw()
     }
@@ -55,7 +55,7 @@ open class PedroDrive(val follower: Follower) : Subsystem<PedroDrive.Mode>(Mode.
     private fun draw() {
         val field = PanelsField.field
         field.setOffsets(PanelsField.presets.PEDRO_PATHING)
-        if (mode == Mode.FOLLOWING) follower.currentPath()?.let { path ->
+        if (state == State.FOLLOWING) follower.currentPath()?.let { path ->
             field.setStyle(PanelsField.TRANSPARENT, PATH_COLOR, 0.75)
             var from = path.get(0.0)
             for (step in 1..PATH_STEPS) {

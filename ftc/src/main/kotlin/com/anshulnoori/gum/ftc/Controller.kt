@@ -4,7 +4,7 @@ import com.anshulnoori.gum.core.Button
 import com.qualcomm.robotcore.hardware.Gamepad
 
 /**
- * One gamepad for one session: `gamepad1.rightBumper.whileHeld { robot.intake.hold(COLLECTING) }`.
+ * One gamepad for one session: `gamepad1.rightBumper.whileHeld { robot.intake.collecting() }`.
  *
  * Buttons change from the SDK's gamepad callback, not by polling: each change the Driver Station
  * sends reaches the session at its next update, in order. PlayStation and Xbox names are the same

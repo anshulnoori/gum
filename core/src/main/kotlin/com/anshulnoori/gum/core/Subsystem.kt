@@ -7,184 +7,220 @@ import ru.nsk.kstatemachine.state.addInitialState
 import ru.nsk.kstatemachine.state.addState
 import ru.nsk.kstatemachine.state.onEntry
 import ru.nsk.kstatemachine.state.transition
+import ru.nsk.kstatemachine.statemachine.ProcessingResult
 import ru.nsk.kstatemachine.statemachine.StateMachine
 import ru.nsk.kstatemachine.statemachine.createStdLibStateMachine
 import ru.nsk.kstatemachine.statemachine.processEventBlocking
+import ru.nsk.kstatemachine.transition.onTriggered
 
 /**
- * A mechanism that is in one mode at a time.
+ * A mechanism that is in one state at a time.
  *
- * A subclass lists its modes as an enum, sets its outputs in [enter], and exposes commands built
- * with [request] and [reach]. It can restrict moves between modes and add automatic moves with
- * [transitions], and run feedback control in [loop]. Gum builds the state machine; on every update
- * after commands run, it takes automatic moves and then calls [loop]. The subsystem enters
- * [initial] at INIT, once setup has run, or on its first update if it is created later. STOP returns
- * the subsystem to [initial].
+ * A subclass lists its states as an enum and sets its outputs in [onEntry]. Its named commands,
+ * built with [request], [hold], and [reach], are its whole API. A command that is valid only from
+ * certain states says so with `from`. Transitions the subsystem takes by itself go in [automatic],
+ * and feedback control goes in [during]. Gum builds the state machine; on every update after
+ * commands run, it takes at most one automatic transition and then calls [during]. The subsystem
+ * enters [initial] at INIT, once setup has run, or on its first update if it is created later.
+ * STOP returns the subsystem to [initial].
  *
  * Construct a subsystem while an OpMode runs, on its thread; it joins that session.
  */
-abstract class Subsystem<M : Enum<M>>(private val initial: M) {
-    init {
-        val session = checkNotNull(ProgramScope.current.get()) {
-            "Create ${javaClass.simpleName} while an OpMode runs, on the OpMode thread"
-        }
-        session.register(this)
-    }
+abstract class Subsystem<S : Enum<S>>(private val initial: S) {
+    private val session: ProgramScope<*> = checkNotNull(ProgramScope.current.get()) {
+        "Create ${javaClass.simpleName} while an OpMode runs, on the OpMode thread"
+    }.also { it.register(this) }
 
-    /** Allowed moves. Without this, any mode can be requested from any other. */
-    protected open val transitions: Transitions<M>? = null
+    /** Transitions the subsystem takes by itself, built with [automatic]. Commands cannot request them. */
+    protected open val automatic: Automatic<S>? = null
 
-    /** Sets outputs for [mode]. Runs each time the subsystem enters a mode, including [initial]. */
-    protected abstract fun enter(mode: M)
+    /** Sets outputs for [state]. Runs each time the subsystem enters a state, including [initial]. */
+    protected abstract fun onEntry(state: S)
 
     /**
-     * Runs on every update after START, after commands and automatic moves, for control that
-     * depends on sensors, such as holding a flywheel speed. Does nothing unless overridden.
+     * Runs on every update after START while in [state], after commands and automatic transitions,
+     * for control that depends on sensors, such as holding a flywheel speed. Does nothing unless overridden.
      */
-    protected open fun loop(mode: M) {}
+    protected open fun during(state: S) {}
 
-    /** The current mode. */
-    val mode: M
+    /** The current state. */
+    val state: S
         get() {
             machine
             return current
         }
 
     /**
-     * A command that moves to [mode] and finishes at once; the subsystem stays in [mode] afterward.
-     * It reserves this subsystem. A move [transitions] does not allow leaves the mode unchanged.
+     * A command that transitions to [state] and finishes at once; the subsystem stays in [state]
+     * afterward. It reserves this subsystem.
      *
-     * [set] runs when the request is allowed, before [enter], to set data the mode uses:
-     * `request(Mode.SPINNING) { targetRpm = rpm }`. Requesting the current mode runs [set] only.
+     * When [from] is given, the request is valid only from those states; from any other state it is
+     * refused: the state stays, and Gum logs the refusal. Requesting the current state is never
+     * refused; it runs [effect] only, without re-entering.
+     *
+     * [effect] runs when the transition is taken, before [onEntry], to set data the state uses:
+     * `request(State.SPINNING) { targetRpm = rpm }`.
      */
-    fun request(mode: M, set: () -> Unit = {}): Command = Command.build()
+    protected fun request(state: S, from: S? = null, effect: () -> Unit = {}): Command =
+        requestCommand(state, from?.let(::setOf), effect)
+
+    /** [request] that is valid from any state in [from]. */
+    protected fun request(state: S, from: Set<S>, effect: () -> Unit = {}): Command =
+        requestCommand(state, from, effect)
+
+    private fun requestCommand(state: S, from: Set<S>?, effect: () -> Unit): Command = Command.build()
         .requiring(this)
-        .setStart {
-            val from = this.mode
-            if (mode == from) {
-                set()
-            } else if (from to mode in edges) {
-                set()
-                machine.processEventBlocking(Request(mode))
-            }
-        }
+        .setStart { take(state, from, effect) }
         .setDone { true }
 
     /**
-     * A command that moves to [mode] like [request] and keeps running until it is cancelled or
-     * interrupted, then returns the subsystem to its initial mode if it is still in [mode].
+     * A command that transitions to [state] like [request] and keeps running until it is cancelled
+     * or interrupted, then returns the subsystem to its initial state if it is still in [state].
+     * It also ends, leaving the state alone, when the subsystem leaves [state] by an automatic
+     * transition, or when its request is refused.
      */
-    fun hold(mode: M, set: () -> Unit = {}): Command {
-        val enter = request(mode, set)
-        return Command.build()
-            .requiring(this)
-            .setStart { enter.start() }
-            .setDone { false }
-            .setEnd { if (this.mode == mode && mode != initial) machine.processEventBlocking(Reset) }
-    }
+    protected fun hold(state: S, from: S? = null, effect: () -> Unit = {}): Command =
+        holdCommand(state, from?.let(::setOf), effect)
 
-    /** A command that reserves this subsystem and finishes once it is in [mode]. */
-    fun reach(mode: M): Command = Command.build()
+    /** [hold] that is valid from any state in [from]. */
+    protected fun hold(state: S, from: Set<S>, effect: () -> Unit = {}): Command =
+        holdCommand(state, from, effect)
+
+    private fun holdCommand(state: S, from: Set<S>?, effect: () -> Unit): Command = Command.build()
         .requiring(this)
-        .setDone { this.mode == mode }
+        .setStart { take(state, from, effect) }
+        .setDone { this.state != state }
+        .setEnd { if (this.state == state && state != initial) machine.processEventBlocking(Reset) }
 
-    /** Declares the moves between modes. */
-    protected fun transitions(block: TransitionsBuilder<M>.() -> Unit): Transitions<M> =
-        Transitions(TransitionsBuilder<M>().apply(block).rules)
+    /** A command that reserves this subsystem and finishes once it is in [state]. */
+    protected fun reach(state: S): Command = Command.build()
+        .requiring(this)
+        .setDone { this.state == state }
+
+    /**
+     * Declares automatic transitions: `A to B whenever { condition } effect { … }`. Each update,
+     * after commands, Gum takes the first declared transition whose source is the current state and
+     * whose condition is true, at most one per update. Conditions must only read: Gum may evaluate
+     * any of them on any update.
+     */
+    protected fun automatic(block: AutomaticBuilder<S>.() -> Unit): Automatic<S> {
+        val transitions = AutomaticBuilder<S>().apply(block).transitions
+        for (transition in transitions) {
+            checkNotNull(transition.condition) {
+                "${javaClass.simpleName}: the automatic transition to ${transition.to} needs `whenever { condition }`"
+            }
+        }
+        return Automatic(transitions)
+    }
 
     private var current = initial
 
     // Built on first use, after the subclass has finished constructing its outputs.
     private val machine: StateMachine by lazy { build() }
 
-    private val automatic: List<Rule<M>> by lazy { transitions?.rules.orEmpty().filter { it.condition != null } }
+    private val automaticTransitions: List<AutomaticTransition<S>> by lazy { automatic?.transitions.orEmpty() }
+
+    private fun take(state: S, from: Set<S>?, effect: () -> Unit) {
+        val source = this.state
+        if (state == source) {
+            effect()
+            return
+        }
+        if (machine.processEventBlocking(Request(state, from, effect)) == ProcessingResult.IGNORED) {
+            session.refuse("${javaClass.simpleName} refused $state: it is $source, and $state is requested only from ${from.orEmpty().joinToString()}")
+        }
+    }
 
     internal fun enterInitialState() {
         machine
     }
 
     internal fun update() {
-        val mode = mode
-        val rule = automatic.firstOrNull { (it.from == null || it.from == mode) && it.to != mode && it.condition!!() }
-        if (rule != null) machine.processEventBlocking(Automatic(rule))
-        loop(current)
+        val state = state
+        val transition = automaticTransitions.firstOrNull {
+            (it.from == null || it.from == state) && it.to != state && it.condition!!()
+        }
+        if (transition != null) machine.processEventBlocking(Taken(transition))
+        during(current)
     }
 
     internal fun reset() {
         machine.processEventBlocking(Reset)
     }
 
-    private val modes: List<M> by lazy { initial.declaringJavaClass.enumConstants.toList() }
-
-    // Moves a command may request.
-    private val edges: Set<Pair<M, M>> by lazy {
-        val requestable = transitions?.rules?.filter { it.condition == null } ?: listOf(Rule(null, null))
-        requestable.flatMap { rule ->
-            (rule.from?.let(::listOf) ?: modes).flatMap { from ->
-                (rule.to?.let(::listOf) ?: modes).filter { it != from }.map { from to it }
-            }
-        }.toSet()
-    }
+    private val allStates: List<S> by lazy { initial.declaringJavaClass.enumConstants.toList() }
 
     private fun build(): StateMachine {
+        val transitions = automaticTransitions
         return createStdLibStateMachine(javaClass.simpleName) {
-            val states = modes.associateWith { DefaultState(it.name) }
-            for ((mode, state) in states) {
-                if (mode == initial) addInitialState(state) else addState(state)
-                state.onEntry {
-                    current = mode
-                    enter(mode)
+            val nodes = allStates.associateWith { DefaultState(it.name) }
+            for ((state, node) in nodes) {
+                if (state == initial) addInitialState(node) else addState(node)
+                node.onEntry {
+                    current = state
+                    this@Subsystem.onEntry(state)
                 }
             }
-            for ((from, to) in edges) {
-                states.getValue(from).transition<Request> {
-                    guard = { event.mode == to }
-                    targetState = states.getValue(to)
+            // Any state can be requested from any other; a request's own `from` is the only limit.
+            // A request no transition accepts is IGNORED, which take() reports as refused.
+            for ((from, node) in nodes) {
+                for (to in allStates) {
+                    if (to == from) continue
+                    node.transition<Request> {
+                        guard = { event.state == to && event.from?.contains(from) != false }
+                        targetState = nodes.getValue(to)
+                    }.onTriggered { it.event.effect() }
                 }
             }
-            for (rule in automatic) {
-                for (from in rule.from?.let(::listOf) ?: modes.filter { it != rule.to }) {
-                    states.getValue(from).transition<Automatic> {
-                        guard = { event.rule === rule }
-                        targetState = states.getValue(rule.to!!)
-                    }
+            for (automatic in transitions) {
+                for (from in automatic.from?.let(::listOf) ?: allStates.filter { it != automatic.to }) {
+                    nodes.getValue(from).transition<Taken> {
+                        guard = { event.transition === automatic }
+                        targetState = nodes.getValue(automatic.to)
+                    }.onTriggered { automatic.effect() }
                 }
             }
-            // STOP always returns to the initial mode, whatever the declared moves allow.
-            transition<Reset> { targetState = states.getValue(initial) }
+            // STOP always returns to the initial state, whatever the subsystem's commands allow.
+            transition<Reset> { targetState = nodes.getValue(initial) }
         }
     }
 
-    private class Request(val mode: Any) : Event
-    private class Automatic(val rule: Rule<*>) : Event
+    private class Request(val state: Any, val from: Set<*>?, val effect: () -> Unit) : Event
+    private class Taken(val transition: AutomaticTransition<*>) : Event
     private object Reset : Event
 }
 
-/** Moves between a subsystem's modes, built with [Subsystem.transitions]. */
-class Transitions<M : Enum<M>> internal constructor(internal val rules: List<Rule<M>>)
+/** A subsystem's automatic transitions, built with [Subsystem.automatic]. */
+class Automatic<S : Enum<S>> internal constructor(internal val transitions: List<AutomaticTransition<S>>)
 
-/** One declared move. A `null` [from] means any mode; a `null` [to] is internal and means any mode. */
-class Rule<M : Enum<M>> internal constructor(internal val from: M?, internal val to: M?) {
+/** One automatic transition. A `null` [from] means any state other than [to]. */
+class AutomaticTransition<S : Enum<S>> internal constructor(internal val from: S?, internal val to: S) {
     internal var condition: (() -> Boolean)? = null
+    internal var effect: () -> Unit = {}
 }
 
-/** Marks a move that can start from any mode. */
-object AnyMode
+/** Marks an automatic transition that can start from any state. */
+object AnyState
 
-class TransitionsBuilder<M : Enum<M>> internal constructor() {
-    internal val rules = mutableListOf<Rule<M>>()
+class AutomaticBuilder<S : Enum<S>> internal constructor() {
+    internal val transitions = mutableListOf<AutomaticTransition<S>>()
 
-    /** Every mode, as the start of a move. */
-    val anyMode = AnyMode
+    /** Every state, as the source of a transition. */
+    val anyState = AnyState
 
-    /** A command may request this move. */
-    infix fun M.to(target: M): Rule<M> = Rule(this, target).also { rules += it }
+    /** A transition from this state to [target]; give it a condition with [whenever]. */
+    infix fun S.to(target: S): AutomaticTransition<S> = AutomaticTransition(this, target).also { transitions += it }
 
-    /** A command may request [target] from any mode. */
-    infix fun AnyMode.to(target: M): Rule<M> = Rule<M>(null, target).also { rules += it }
+    /** A transition to [target] from any other state; give it a condition with [whenever]. */
+    infix fun AnyState.to(target: S): AutomaticTransition<S> = AutomaticTransition<S>(null, target).also { transitions += it }
 
-    /** Makes this move automatic: Gum takes it on an update when [condition] is true. Commands cannot request it. */
-    infix fun Rule<M>.whenever(condition: () -> Boolean) {
+    /** Gum takes this transition on an update when [condition] is true. [condition] must only read. */
+    infix fun AutomaticTransition<S>.whenever(condition: () -> Boolean): AutomaticTransition<S> = apply {
         this.condition = condition
+    }
+
+    /** Runs [effect] when Gum takes this transition, before the target state's `onEntry`. */
+    infix fun AutomaticTransition<S>.effect(effect: () -> Unit) {
+        this.effect = effect
     }
 }

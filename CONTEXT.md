@@ -19,6 +19,18 @@ A robot mechanism with one owner for its hardware, state, and valid operations.
 **Operation**:
 A specific request for a subsystem to perform behavior, with an outcome that belongs to that request.
 
+**State**:
+What a subsystem is doing, one at a time, such as Collecting. Not "mode".
+
+**Transition**:
+A change from one state to another. A named command requests it, or the subsystem takes it by itself as an automatic transition. Not "move".
+
+**Effect**:
+The action a transition runs when it is taken, before the target state's entry.
+
+**Refused request**:
+A request made from a state it is not valid from. The state stays, and Gum reports it.
+
 **Routine**:
 A coordinated command or command group, such as scoring followed by parking.
 

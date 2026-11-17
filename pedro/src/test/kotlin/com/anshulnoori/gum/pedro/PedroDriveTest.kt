@@ -63,23 +63,23 @@ class PedroDriveTest {
             drive = it
         }.initialize(Unit)
         session.start()
-        assertEquals(PedroDrive.Mode.IDLE, drive.mode)
+        assertEquals(PedroDrive.State.IDLE, drive.state)
         calls.clear()
 
         drive.drive({ 1.0 }, { 0.0 }, { 0.0 }).schedule()
         session.tick()
-        assertEquals(PedroDrive.Mode.DRIVER, drive.mode)
+        assertEquals(PedroDrive.State.DRIVER, drive.state)
         assertEquals(listOf("localize", "drive manual=true"), calls, "one follower update per loop, after the command")
         val robot = PanelsField.field.canvas.items.filterIsInstance<Circle>().single()
         assertEquals(listOf(12.0, 34.0), listOf(robot.x, robot.y), "draws the robot at its pose on the Panels field")
 
         drive.hold(Pose(10.0, 0.0, 0.0)).schedule()
         session.tick()
-        assertEquals(PedroDrive.Mode.HOLDING, drive.mode, "a newer drive command interrupts the stick drive")
+        assertEquals(PedroDrive.State.HOLDING, drive.state, "a newer drive command interrupts the stick drive")
 
         calls.clear()
         session.stop()
-        assertEquals(PedroDrive.Mode.IDLE, drive.mode)
+        assertEquals(PedroDrive.State.IDLE, drive.state)
         assertEquals(listOf("stop"), calls)
     }
 
@@ -93,7 +93,7 @@ class PedroDriveTest {
         }.initialize(Unit)
         session.start()
         session.tick()
-        assertEquals(PedroDrive.Mode.FOLLOWING, drive.mode, "entering IDLE at INIT, not on the first update, keeps the path")
+        assertEquals(PedroDrive.State.FOLLOWING, drive.state, "entering IDLE at INIT, not on the first update, keeps the path")
         assertSame(path, drive.follower.currentPath())
         session.stop()
         // The Panels field is shared, and the other test counts what is drawn on it.

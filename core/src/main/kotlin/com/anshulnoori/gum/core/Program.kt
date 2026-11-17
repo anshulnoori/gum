@@ -30,13 +30,13 @@ class Program<E, D> internal constructor(
 
     /**
      * Creates a session on the calling thread and runs dependency creation and setup once.
-     * Every [Subsystem] created by then enters its initial mode, still in INIT.
+     * Every [Subsystem] created by then enters its initial state, still in INIT.
      * A failure runs registered cleanup before propagating the original error.
      *
      * Every tick first samples each [Button]. An INIT tick then runs [ProgramScope.initLoop] callbacks.
      * An active tick runs button actions, advances Ivy's global scheduler, updates every [Subsystem],
      * and runs the program's own [ProgramScope.loop] callbacks. STOP runs the program's cleanup,
-     * returns subsystems to their initial modes, and finally clears the scheduler.
+     * returns subsystems to their initial states, and finally clears the scheduler.
      */
     fun initialize(environment: E): OpModeSession {
         Scheduler.reset()
@@ -119,6 +119,23 @@ class ProgramScope<out E> internal constructor(
      * Ivy commands still scheduled at STOP are dropped without their `end` callback.
      */
     fun onStop(callback: () -> Unit) = register(stopCallbacks, callback)
+
+    /**
+     * Runs when a subsystem refuses a request, with a message that names the subsystem, the
+     * requested state, and the state it was in. FTC hosts log it to RobotLog and telemetry.
+     * Without any callback, Gum prints refusals to standard error, so a refusal is never silent.
+     */
+    fun onRefused(callback: (message: String) -> Unit) {
+        checkConfiguring("Register lifecycle callbacks")
+        refusedCallbacks += callback
+    }
+
+    private val refusedCallbacks = mutableListOf<(String) -> Unit>()
+
+    internal fun refuse(message: String) {
+        if (refusedCallbacks.isEmpty()) System.err.println("Gum: $message")
+        for (callback in refusedCallbacks) callback(message)
+    }
 
     internal fun register(subsystem: Subsystem<*>) {
         subsystems += subsystem

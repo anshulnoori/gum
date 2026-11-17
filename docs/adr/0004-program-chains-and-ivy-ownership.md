@@ -8,7 +8,7 @@ A program's setup can end with the program to run next. After a run that started
 Every run belongs to a chain. A run started from the Driver Station starts a new chain, and each chain has a Metro `ChainScope` graph that every run's `RobotGraph` extends, so values such as a pose last for the whole chain.
 This replaces the earlier success-only `onSuccess` handoff design.
 
-Ivy requirements remain how Gum decides who controls a subsystem. Subsystem commands (`request`, `hold`, `reach`) reserve their subsystem, and routines reserve everything they await.
+Ivy requirements remain how Gum decides who controls a subsystem. Subsystem commands (built with `request`, `hold`, `reach`) reserve their subsystem, and routines reserve everything they await.
 
 ## Consequences
 
@@ -20,4 +20,4 @@ A small request can interrupt a larger routine that reserves the same subsystem.
 
 MercurialFTC re-registers the same OpMode name with the next program; Gum uses the next program's own name and kind so the Driver Station timer matches it.
 Dropping requirements so that subsystems arbitrate requests themselves, as MercurialFTC does, was proposed and rejected: requirements model a robot's physical resources directly.
-`request(mode)` leaves a mode in place after its command ends, which is less Ivy-like than `hold(mode)`. Both stay until porting apex-2025 shows which autos need.
+`request(state)` leaves a state in place after its command ends, which is less Ivy-like than `hold(state)`. Both stay until porting apex-2025 shows which autos need.

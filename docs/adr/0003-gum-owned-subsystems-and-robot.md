@@ -9,6 +9,7 @@ After writing an intake against raw KStateMachine and Metro, the user chose to m
 
 Subsystems extend `Subsystem<Mode>`: an enum of modes, an `enter(mode)` that sets outputs, commands built with `request(mode)`, and an optional `transitions { }` block.
 Gum builds the KStateMachine machine from these, takes automatic moves after Ivy each update, and returns every subsystem to its initial mode at STOP.
+[ADR 0005](0005-requested-and-automatic-transitions.md) renames these to states and transitions and replaces the `transitions` block.
 Team code does not use KStateMachine directly.
 
 Metro remains the DI library. TeamCode declares one graph that lists every subsystem:

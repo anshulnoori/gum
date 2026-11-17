@@ -104,7 +104,7 @@ Ivy's `Scheduler` is a JVM-wide singleton; each session takes ownership of it:
 
 - `initialize` resets it, dropping commands left from outside a session.
 - Each active tick samples buttons and runs their actions, runs `Scheduler.execute()`, updates subsystems, then runs the program's `loop` callbacks.
-- STOP resets it after every other cleanup, including returning subsystems to their initial modes. Commands still scheduled are dropped without their `end` callback.
+- STOP resets it after every other cleanup, including returning subsystems to their initial states. Commands still scheduled are dropped without their `end` callback.
 - INIT ticks do not advance commands. Ivy starts a command when it is scheduled, so schedule commands from START or later.
 
 ## Subsystems
@@ -115,57 +115,59 @@ Ivy's `Scheduler` is a JVM-wide singleton; each session takes ownership of it:
 class Intake(
     private val left: DcMotorSimple = hardware(RobotMap.intakeLeft),
     private val right: DcMotorSimple = hardware(RobotMap.intakeRight),
-) : Subsystem<Intake.Mode>(initial = Mode.OFF) {
-    enum class Mode(val power: Double) { OFF(0.0), COLLECTING(1.0), EJECTING(-1.0) }
+) : Subsystem<Intake.State>(initial = State.OFF) {
+    enum class State(val power: Double) { OFF(0.0), COLLECTING(1.0), EJECTING(-1.0) }
 
-    override val transitions = transitions {   // optional; without it any mode can follow any other
-        Mode.OFF to Mode.COLLECTING
-        Mode.OFF to Mode.EJECTING
-        anyMode to Mode.OFF
-        Mode.COLLECTING to Mode.OFF whenever { full }
+    override fun onEntry(state: State) {
+        left.power = state.power
+        right.power = state.power
     }
 
-    override fun enter(mode: Mode) {
-        left.power = mode.power
-        right.power = mode.power
-    }
-
-    fun collect(): Command = request(Mode.COLLECTING)
+    fun collect(): Command = request(State.COLLECTING)
+    fun eject(): Command = request(State.EJECTING, from = State.OFF)   // only from Off
+    fun stop(): Command = request(State.OFF)
+    fun collecting(): Command = hold(State.COLLECTING)                 // for whileHeld
 }
 ```
 
 - A subsystem joins the session running on its thread when it is constructed; constructing one outside a session fails.
-- `request(mode)` is an Ivy command that reserves the subsystem, moves to `mode`, and finishes at once. A move `transitions` does not list leaves the mode unchanged.
-- `whenever` makes a move automatic: Gum takes the first matching one each update, after commands. Commands cannot request automatic moves.
-- `enter` runs on every entry, including the initial mode, which each subsystem enters at INIT, after setup. A subsystem created later enters it on its first update.
-- STOP returns each subsystem to its initial mode, whatever `transitions` allows.
+- Named commands are a subsystem's whole API. `request`, `hold`, and `reach` are protected, so programs call `intake.collect()`, not `intake.request(...)`.
+- `request(state)` is an Ivy command that reserves the subsystem, transitions to `state`, and finishes at once. Any state can be requested from any other.
+- `request(state, from = ...)` is valid only from the named state, or from a set of states. From any other state the request is refused: the state stays, and Gum reports it. Requesting the current state is never refused.
+- A refused request is never silent. Gum passes a message naming the subsystem, the requested state, and the current state to `onRefused` callbacks; FTC programs log it to RobotLog and add it to the Driver Station's telemetry log. Without a callback, Gum prints it to standard error. Once command outcomes exist, a refused request will also end with a refused outcome.
+- `onEntry` runs on every entry, including the initial state, which each subsystem enters at INIT, after setup. A subsystem created later enters it on its first update.
+- STOP returns each subsystem to its initial state, whatever its commands allow.
 
-Mechanisms with feedback hold data beside their mode and run control in `loop`:
+Mechanisms with feedback hold data beside their state, run control in `during`, and take automatic transitions:
 
 ```kotlin
-class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Subsystem<Flywheel.Mode>(Mode.OFF) {
-    enum class Mode { OFF, SPINNING_UP, READY }
+class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Subsystem<Flywheel.State>(State.OFF) {
+    enum class State { OFF, SPINNING_UP, READY }
 
     private var targetRpm = 0.0
+    var misses = 0
+        private set
     private val rpm get() = motor.velocity / TICKS_PER_REV * 60
 
-    override val transitions = transitions {
-        anyMode to Mode.SPINNING_UP
-        anyMode to Mode.OFF
-        Mode.SPINNING_UP to Mode.READY whenever { abs(targetRpm - rpm) < 100 }
+    override val automatic = automatic {
+        State.SPINNING_UP to State.READY whenever { abs(targetRpm - rpm) < 100 }
+        State.READY to State.SPINNING_UP whenever { abs(targetRpm - rpm) > 300 } effect { misses++ }
     }
 
-    override fun enter(mode: Mode) { if (mode == Mode.OFF) motor.power = 0.0 }
-    override fun loop(mode: Mode) { if (mode != Mode.OFF) motor.power = KP * (targetRpm - rpm) }
+    override fun onEntry(state: State) { if (state == State.OFF) motor.power = 0.0 }
+    override fun during(state: State) { if (state != State.OFF) motor.power = KP * (targetRpm - rpm) }
 
-    fun spinTo(rpm: Double): Command = request(Mode.SPINNING_UP) { targetRpm = rpm }.then(reach(Mode.READY))
+    fun spinTo(rpm: Double): Command = request(State.SPINNING_UP) { targetRpm = rpm }.then(reach(State.READY))
 }
 ```
 
-- `loop(mode)` runs on every update after START, after commands and automatic moves.
-- `request(mode) { }` runs its block only when the move is allowed, before `enter`. Requesting the current mode runs the block without re-entering, so a new target takes effect.
-- `reach(mode)` reserves the subsystem and finishes once it is in `mode`.
-- Operation outcomes (rejected, timed out, faulted) are not reported yet. A rejected request and a `reach` that never arrives look like any other command to Ivy.
+- `automatic { A to B whenever { condition } }` declares a transition the subsystem takes by itself; `anyState to B` starts from any other state. Each update, after commands, Gum takes the first declared transition whose source is the current state and whose condition is true. Declaration order decides between matches, and Gum takes at most one automatic transition per update.
+- Conditions must only read: Gum may evaluate any of them on any update. An automatic transition without `whenever` fails when the subsystem is created.
+- Automatic transitions are not commands and take no requirement. Commands cannot request them.
+- `effect { }` runs when its transition is taken, before the target's `onEntry`. On `request(state) { }` the block is the effect: it runs only when the transition is taken. Requesting the current state runs the effect without re-entering, so a new target takes effect.
+- `during(state)` runs on every update after START, after commands and automatic transitions.
+- `reach(state)` reserves the subsystem and finishes once it is in `state`.
+- Other outcomes (timed out, faulted) are not reported yet. A `reach` that never arrives looks like any other command to Ivy.
 
 ## Controller events
 
@@ -176,7 +178,7 @@ val main = teleop("Main") { robot ->
         if (gamepad1.dpadUp.wasPressed) alliance = Alliance.BLUE
         if (gamepad1.dpadDown.wasPressed) alliance = Alliance.RED
     }
-    gamepad1.rightBumper.whileHeld { robot.intake.hold(Intake.Mode.COLLECTING) }
+    gamepad1.rightBumper.whileHeld { robot.intake.collecting() }
     gamepad1.circle.onPress { robot.intake.stop().schedule() }
 }
 ```
@@ -186,7 +188,7 @@ val main = teleop("Main") { robot ->
 - `isDown`, `wasPressed`, and `wasReleased` describe the latest update, in INIT and after START, so INIT code polls them.
 - `onPress` and `onRelease` actions run only after START, before Ivy advances, so a command they schedule starts and runs in that update. Bind them during setup.
 - A button held through START, or down when first used, presses only after a release.
-- `whileHeld { command }` schedules a fresh command on press and cancels it on release. `Subsystem.hold(mode)` enters `mode`, keeps running, and returns to the initial mode when cancelled or interrupted, so a newer hold on the same subsystem takes over.
+- `whileHeld { command }` schedules a fresh command on press and cancels it on release. A subsystem's hold command, built with `hold(state)`, enters `state`, keeps running, and returns to the initial state when cancelled or interrupted, so a newer hold on the same subsystem takes over. If an automatic transition leaves `state`, or the hold's request is refused, the hold ends and leaves the state alone.
 - STOP from an action skips the remaining actions.
 - Programs use `gamepad1`, `gamepad2`, `telemetry`, and `hardwareMap` directly. The gamepads are `Controller`s: every SDK button as a `Button` (PlayStation and Xbox names are the same button), sticks and triggers as `Double`, and `raw` for the SDK gamepad. Sticks and triggers also come from the SDK's callback: each update reads the newest packet that arrived before it started. `raw` is copied on another thread, so values read from it can mix two packets.
 - `Button { condition }` checks a condition at the start of each update, for inputs with no events, such as a sensor threshold. Hub sensors have no SDK callbacks; they change when Gum bulk-reads the hubs, once per update.
@@ -209,10 +211,10 @@ val score = routine(robot.intake, robot.flywheel) {
 ## Background reads
 
 ```kotlin
-class Shooter(sensor: Rev2mDistanceSensor = hardware(RobotMap.ballSensor)) : Subsystem<Shooter.Mode>(Mode.IDLE) {
+class Shooter(sensor: Rev2mDistanceSensor = hardware(RobotMap.ballSensor)) : Subsystem<Shooter.State>(State.IDLE) {
     private val distance = background { sensor.getDistance(DistanceUnit.MM) }
     ...
-    override fun loop(mode: Mode) { if ((distance.value ?: 999.0) < 40) ... }
+    override fun during(state: State) { if ((distance.value ?: 999.0) < 40) ... }
 }
 ```
 
@@ -232,7 +234,7 @@ interface RobotGraph : Robot {
 ```
 
 `@SingleIn(OpModeScope::class)` gives each run one intake. Metro uses a constructor default when the graph has no binding for that parameter. `Robot` supplies `battery`.
-Each INIT reads every accessor `RobotGraph` declares before setup runs, so every subsystem exists, and enters its initial mode, during INIT, even one a program first uses after START.
+Each INIT reads every accessor `RobotGraph` declares before setup runs, so every subsystem exists, and enters its initial state, during INIT, even one a program first uses after START.
 
 ## Pedro Pathing
 
@@ -248,7 +250,7 @@ val main = teleop("Main") { robot ->
 }
 ```
 
-- Gum updates the follower every update after START, after commands. `mode` mirrors the follower's mode: `IDLE`, `FOLLOWING`, `HOLDING`, or `DRIVER`.
+- Gum updates the follower every update after START, after commands. `state` mirrors the follower's mode through automatic transitions: `IDLE`, `FOLLOWING`, `HOLDING`, or `DRIVER`.
 - `follow(path)` and `hold(pose)` are Ivy's Pedro commands (`com.pedropathing.ivy:pedro`) with the drive reserved, so a newer drive command interrupts an older one. `drive(...)` reads its suppliers every update until interrupted.
 - STOP stops the drivetrain. Pedro's device names should come from `RobotMap`, for example `RobotMap.frontLeft.name`.
 - After START, it draws the robot and the path it follows on the Panels field, in Pedro's coordinates. It draws only on updates when Panels sends the field.

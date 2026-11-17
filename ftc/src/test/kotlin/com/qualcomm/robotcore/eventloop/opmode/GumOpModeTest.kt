@@ -189,8 +189,8 @@ class GumOpModeTest {
 
     class Roller : Subsystem<State>(State.OFF) {
         val entered = CopyOnWriteArrayList<State>()
-        override fun enter(mode: State) {
-            entered += mode
+        override fun onEntry(state: State) {
+            entered += state
         }
     }
 

@@ -52,13 +52,13 @@ Require each command to observe its own operation outcome.
 Validate Ivy reentrant schedule/cancel behavior with its actual dependency.
 Resolve scheduler mutation and cleanup policy before controller callbacks schedule arbitrary work.
 
-Status: partly implemented with an intake (two motors, modes Off, Collecting, Ejecting) in apex-2026.
+Status: partly implemented with an intake (two motors, states Off, Collecting, Ejecting) in apex-2026.
 Sessions drive Ivy 1.1.1's scheduler: see [Ivy commands](lifecycle.md#ivy-commands).
-Gum's `Subsystem` builds a KStateMachine 0.38.1 machine from an enum of modes and an optional `transitions` block; see [subsystems](lifecycle.md#subsystems).
-Commands request a mode and finish once it is entered; disallowed requests leave the mode unchanged, and automatic moves run after Ivy each update.
+Gum's `Subsystem` builds a KStateMachine 0.38.1 machine from an enum of states and an optional `automatic` block; see [subsystems](lifecycle.md#subsystems) and [ADR 0005](adr/0005-requested-and-automatic-transitions.md).
+Named commands request a state and finish once it is entered. A request valid only `from` certain states is refused from any other, and Gum reports the refusal; automatic transitions run after Ivy each update.
 JVM tests drive real Ivy and KStateMachine, including the intake with fake motors.
-Feedback control is implemented: `loop(mode)` runs control after automatic moves, `request(mode) { }` sets data when the move is allowed, and `reach(mode)` waits for a mode; JVM tests drive a flywheel with a fake sensor.
-Faults, timeouts, nested modes, and an outcome type that reports rejection remain.
+Feedback control is implemented: `during(state)` runs control after automatic transitions, `request(state) { }` sets data in the transition's effect, and `reach(state)` waits for a state; JVM tests drive a flywheel with a fake sensor.
+Faults, timeouts, nested states, and an outcome type that reports refusal remain.
 
 Ivy 1.1.1 reentrancy, observed against the real dependency:
 a command interrupted by a command scheduled during `Scheduler.execute()` still runs `execute()` once more in that pass, after its `end(INTERRUPTED)`.

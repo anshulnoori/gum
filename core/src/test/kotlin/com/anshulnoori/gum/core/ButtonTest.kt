@@ -85,46 +85,48 @@ class ButtonTest {
         session.stop()
     }
 
-    private enum class Mode { OFF, COLLECTING, EJECTING }
+    private enum class State { OFF, COLLECTING, EJECTING }
 
-    private class Roller : Subsystem<Mode>(Mode.OFF) {
-        val entered = mutableListOf<Mode>()
-        override fun enter(mode: Mode) { entered += mode }
+    private class Roller : Subsystem<State>(State.OFF) {
+        val entered = mutableListOf<State>()
+        override fun onEntry(state: State) { entered += state }
+        fun collecting() = hold(State.COLLECTING)
+        fun ejecting() = hold(State.EJECTING)
     }
 
     @Test
-    fun `whileHeld holds a mode while down, and another held button takes over`() {
+    fun `whileHeld holds a state while down, and another held button takes over`() {
         var collect = false
         var eject = false
         lateinit var roller: Roller
         val session = teleop<Unit, Roller>("Driver", dependencies = { Roller() }) {
             roller = it
-            Button { collect }.whileHeld { roller.hold(Mode.COLLECTING) }
-            Button { eject }.whileHeld { roller.hold(Mode.EJECTING) }
+            Button { collect }.whileHeld { roller.collecting() }
+            Button { eject }.whileHeld { roller.ejecting() }
         }.initialize(Unit)
         session.start()
 
         collect = true
         session.tick()
         session.tick()
-        assertEquals(Mode.COLLECTING, roller.mode, "held across updates")
+        assertEquals(State.COLLECTING, roller.state, "held across updates")
         collect = false
         session.tick()
-        assertEquals(Mode.OFF, roller.mode, "release returns to the initial mode")
+        assertEquals(State.OFF, roller.state, "release returns to the initial state")
 
         collect = true
         session.tick()
         eject = true
         session.tick()
-        assertEquals(Mode.EJECTING, roller.mode, "the newer hold interrupts the older one")
+        assertEquals(State.EJECTING, roller.state, "the newer hold interrupts the older one")
         collect = false
         session.tick()
-        assertEquals(Mode.EJECTING, roller.mode, "releasing the interrupted button changes nothing")
+        assertEquals(State.EJECTING, roller.state, "releasing the interrupted button changes nothing")
         eject = false
         session.tick()
         session.stop()
         assertEquals(
-            listOf(Mode.OFF, Mode.COLLECTING, Mode.OFF, Mode.COLLECTING, Mode.OFF, Mode.EJECTING, Mode.OFF),
+            listOf(State.OFF, State.COLLECTING, State.OFF, State.COLLECTING, State.OFF, State.EJECTING, State.OFF),
             roller.entered,
         )
     }

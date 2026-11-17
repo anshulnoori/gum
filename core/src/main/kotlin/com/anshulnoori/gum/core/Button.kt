@@ -74,7 +74,8 @@ class Button private constructor(private val read: (() -> Boolean)?, down: Boole
 
     /**
      * Schedules a fresh command from [command] each time the button goes down after START, and
-     * cancels it when the button goes up. Pair it with [Subsystem.hold] for hold-to-run mechanisms.
+     * cancels it when the button goes up. Pair it with a subsystem's named hold command, such as
+     * `robot.intake.collecting()`, for hold-to-run mechanisms.
      */
     fun whileHeld(command: () -> Command) {
         var running: Command? = null

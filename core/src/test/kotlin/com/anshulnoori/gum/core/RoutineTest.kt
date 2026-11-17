@@ -8,10 +8,11 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class RoutineTest {
-    private enum class Mode { OFF, ON }
+    private enum class State { OFF, ON }
 
-    private class Roller : Subsystem<Mode>(Mode.OFF) {
-        override fun enter(mode: Mode) = Unit
+    private class Roller : Subsystem<State>(State.OFF) {
+        override fun onEntry(state: State) = Unit
+        fun on() = request(State.ON)
     }
 
     private fun session(setup: ProgramScope<Unit>.(Roller) -> Unit): OpModeSession =
@@ -26,8 +27,8 @@ class RoutineTest {
         val session = session { r ->
             roller = r
             command = routine(roller) {
-                await(roller.request(Mode.ON))
-                events += "on ${roller.mode}"
+                await(roller.on())
+                events += "on ${roller.state}"
                 waitUntil { ready }
                 events += "ready"
                 await(Command.build().setDone { events.size >= 3 }.setExecute { events += "child" })
@@ -72,7 +73,7 @@ class RoutineTest {
         val error = assertFailsWith<IllegalStateException> {
             session { r ->
                 roller = r
-                onStart { routine { await(roller.request(Mode.ON)) }.schedule() }
+                onStart { routine { await(roller.on()) }.schedule() }
             }
         }
         assertTrue("routine(...)" in error.message.orEmpty())
