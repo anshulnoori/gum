@@ -1,6 +1,7 @@
 package com.anshulnoori.gum.core
 
 import com.pedropathing.ivy.Command
+import com.pedropathing.ivy.behaviors.EndCondition
 import ru.nsk.kstatemachine.event.Event
 import ru.nsk.kstatemachine.state.DefaultState
 import ru.nsk.kstatemachine.state.addInitialState
@@ -68,10 +69,17 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
     protected fun request(state: S, from: Set<S>, effect: () -> Unit = {}): Command =
         requestCommand(state, from, effect)
 
-    private fun requestCommand(state: S, from: Set<S>?, effect: () -> Unit): Command = Command.build()
-        .requiring(this)
-        .setStart { take(state, from, effect) }
-        .setDone { true }
+    // Each command below reports done only until it ends. Ivy 1.1.1's Scheduler.execute can reach a
+    // command that was already interrupted in the same pass; a command that reports done there is
+    // ended again, and Ivy then removes this subsystem from the command that took it over.
+    private fun requestCommand(state: S, from: Set<S>?, effect: () -> Unit): Command {
+        var ended = false
+        return Command.build()
+            .requiring(this)
+            .setStart { ended = false; take(state, from, effect) }
+            .setDone { !ended }
+            .setEnd { ended = it != EndCondition.SUSPENDED }
+    }
 
     /**
      * A command that transitions to [state] like [request] and keeps running until it is cancelled
@@ -86,16 +94,27 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
     protected fun hold(state: S, from: Set<S>, effect: () -> Unit = {}): Command =
         holdCommand(state, from, effect)
 
-    private fun holdCommand(state: S, from: Set<S>?, effect: () -> Unit): Command = Command.build()
-        .requiring(this)
-        .setStart { take(state, from, effect) }
-        .setDone { this.state != state }
-        .setEnd { if (this.state == state && state != initial) machine.processEventBlocking(Reset) }
+    private fun holdCommand(state: S, from: Set<S>?, effect: () -> Unit): Command {
+        var ended = false
+        return Command.build()
+            .requiring(this)
+            .setStart { ended = false; take(state, from, effect) }
+            .setDone { !ended && this.state != state }
+            .setEnd {
+                ended = it != EndCondition.SUSPENDED
+                if (this.state == state && state != initial) machine.processEventBlocking(Reset)
+            }
+    }
 
     /** A command that reserves this subsystem and finishes once it is in [state]. */
-    protected fun reach(state: S): Command = Command.build()
-        .requiring(this)
-        .setDone { this.state == state }
+    protected fun reach(state: S): Command {
+        var ended = false
+        return Command.build()
+            .requiring(this)
+            .setStart { ended = false }
+            .setDone { !ended && this.state == state }
+            .setEnd { ended = it != EndCondition.SUSPENDED }
+    }
 
     /**
      * Declares automatic transitions: `A to B whenever { condition } effect { … }`. Each update,

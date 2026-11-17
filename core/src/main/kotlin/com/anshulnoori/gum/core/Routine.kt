@@ -40,7 +40,7 @@ fun routine(vararg requirements: Any, body: suspend Routine.() -> Unit): Command
         .requiring(*requirements)
         .setStart { routine.begin(body) }
         .setExecute { routine.step() }
-        .setDone { routine.finished }
+        .setDone { routine.finished && !routine.interrupted }
         .setEnd { routine.end(it) }
 }
 
@@ -50,6 +50,12 @@ class Routine internal constructor(private val requirements: Set<Any>) {
     private var child: Command? = null
     private var condition: (() -> Boolean)? = null
     internal var finished = false
+        private set
+
+    // Set when Ivy ends the routine before its body returns. The routine then never reports done:
+    // Ivy 1.1.1's Scheduler.execute can reach an interrupted command again in the same pass, and it
+    // ends a command that reports done there a second time, which removes the new owner's requirements.
+    internal var interrupted = false
         private set
 
     /** Runs [command] to completion inside this routine. It may need only the routine's requirements. */
@@ -83,6 +89,7 @@ class Routine internal constructor(private val requirements: Set<Any>) {
 
     internal fun begin(body: suspend Routine.() -> Unit) {
         finished = false
+        interrupted = false
         child = null
         condition = null
         body.createCoroutine(this, Completion()).resume(Unit)
@@ -116,6 +123,7 @@ class Routine internal constructor(private val requirements: Set<Any>) {
         continuation?.also { continuation = null }
             ?.resumeWithException(CancellationException("Routine ended: $reason"))
         finished = true
+        interrupted = true
     }
 
     private inner class Completion : Continuation<Unit> {

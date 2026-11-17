@@ -67,6 +67,51 @@ class RoutineTest {
         session.stop()
     }
 
+    private enum class Roll { OFF, ON, EJECT }
+
+    private class TwoWay : Subsystem<Roll>(Roll.OFF) {
+        override fun onEntry(state: Roll) = Unit
+        fun on() = hold(Roll.ON)
+        fun eject() = hold(Roll.EJECT)
+        fun ejectOnce() = request(Roll.EJECT)
+    }
+
+    // Ivy 1.1.1's Scheduler.execute walks a copy of its running commands. When an earlier command
+    // schedules one that interrupts a later one, the loop still reaches the interrupted command; if
+    // it reports done, Ivy ends it again and removes the roller from the command that took it over.
+    @Test
+    fun `an interrupted routine or request never strips the roller from the command that took it over`() {
+        for (victim in listOf("routine", "button request")) {
+            var go = false
+            var down = false
+            lateinit var roller: TwoWay
+            lateinit var on: Command
+            val session = teleop<Unit, TwoWay>("Teleop", dependencies = { TwoWay() }) { r ->
+                roller = r
+                on = roller.on()
+                val scheduler = routine { waitUntil { go }; on.schedule() }
+                onStart { scheduler.schedule() }
+                if (victim == "routine") {
+                    val stuck = routine(roller) { waitUntil { false } }
+                    onStart { stuck.schedule() }
+                } else {
+                    Button { down }.onPress { roller.ejectOnce().schedule() }
+                }
+            }.initialize(Unit)
+            session.start()
+            session.tick()
+            go = true
+            down = true
+            session.tick()
+            assertTrue(on.isScheduled, "$victim: hold(ON) took the roller")
+            val eject = roller.eject()
+            eject.schedule()
+            assertFalse(on.isScheduled, "$victim: hold(EJECT) interrupts hold(ON), so one command owns the roller")
+            assertTrue(eject.isScheduled)
+            session.stop()
+        }
+    }
+
     @Test
     fun `awaiting a command that needs more than the routine reserves fails`() {
         lateinit var roller: Roller
