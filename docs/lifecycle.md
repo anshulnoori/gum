@@ -181,6 +181,12 @@ val main = teleop("Main") { robot ->
     }
     gamepad1.rightBumper.whileHeld { robot.intake.collecting() }
     gamepad1.circle.onPress { robot.intake.stop().schedule() }
+    gamepad1.above(Axis.RIGHT_TRIGGER, 0.5).whileHeld { robot.intake.ejecting() }
+    (gamepad1.leftBumper and gamepad1.dpadLeft).onPress { robot.lift.climb().schedule() }
+    gamepad1.triangle.doublePress(0.3).onPress { robot.lift.stow().schedule() }
+    gamepad2.a.toggleOnPress { robot.flywheel.spinning() }
+    val slow = gamepad1.leftStickButton.toggled()
+    loop { telemetry.addData("Slow mode", slow.isDown) }
 }
 ```
 
@@ -193,6 +199,15 @@ val main = teleop("Main") { robot ->
 - STOP from an action skips the remaining actions.
 - Programs use `gamepad1`, `gamepad2`, `telemetry`, and `hardwareMap` directly. The gamepads are `Controller`s: every SDK button as a `Button` (PlayStation and Xbox names are the same button), sticks and triggers as `Double`, and `raw` for the SDK gamepad. Sticks and triggers also come from the SDK's callback: each update reads the newest packet that arrived before it started. `raw` is copied on another thread, so values read from it can mix two packets.
 - `Button { condition }` checks a condition at the start of each update, for inputs with no events, such as a sensor threshold. Hub sensors have no SDK callbacks; they change when Gum bulk-reads the hubs, once per update.
+- `above(axis, threshold)`, `below(axis, threshold)`, and `between(axis, low, high)` on a `Controller` turn a stick or trigger (`Axis.LEFT_STICK_X` through `Axis.RIGHT_TRIGGER`) into a `Button` that changes from the SDK's callback like any other button, so a trigger pull is an event, not a poll. `above` and `below` are strict; `between` is inclusive. Stick Y is positive down, as in the SDK. The SDK reports axes as `Float`, so a value equal to a `Double` threshold such as 0.2 can land on either side of it.
+- Derived buttons change as their sources change, in the same update and in arrival order, so a tap between updates still counts. They are ordinary `Button`s: every binding and every combinator works on them, and they can be chained, such as `gamepad1.a.debounce(0.05).doublePress(0.3)`.
+  - `a and b`, `a or b`, and `!a` combine buttons, including buttons from both gamepads and condition buttons. `(!a).onPress { }` runs when `a` is released.
+  - `debounce(pressSeconds, releaseSeconds = 0.0)` goes down once its source has stayed down for `pressSeconds`, and up once it has stayed up for `releaseSeconds`. A change that reverses first is ignored. Each update first applies debounce times that have run out, then the changes that arrived since the last update.
+  - `multiPress(presses, windowSeconds)` goes down at the last of `presses` presses within `windowSeconds` of the first, and up at the next release; `doublePress(windowSeconds)` is two presses. The next press starts a new count. The source's own actions still run at every press.
+  - `toggled(down = false)` flips at each press of its source, for a latched setting read with `isDown`.
+  - Times count from the start of the update that applies each change, so they are accurate to one update.
+  - A derived button starts in the state its sources give it, so a source held at creation or through START does not press it. It cannot `post`.
+- `toggleOnPress { command }` schedules a fresh command at a press and cancels it at the next one. If the command has ended by then, the press schedules a fresh one.
 
 ## Routines
 

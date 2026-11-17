@@ -173,23 +173,45 @@ class ProgramScope<out E> internal constructor(
         if (!posted.offer(if (down) button.pressChange else button.releaseChange)) overflowed.set(true)
     }
 
-    /** Applies reported changes in arrival order, then checks condition buttons, then runs actions. */
+    /** The session's time source, in nanoseconds. Tests replace it. */
+    internal var clock: () -> Long = System::nanoTime
+
+    /** When the current update started; every change it applies counts as happening then. */
+    internal var now: Long = clock()
+        private set
+
+    /** Applies a change to [button], records it for dispatch, and passes it to buttons derived from it. */
+    internal fun change(button: Button, down: Boolean) {
+        val press = button.apply(down) ?: return
+        changes += button
+        pressed += press
+        button.notifyDependents()
+    }
+
+    /**
+     * Applies debounce timers that ran out, then reported changes in arrival order, then checks
+     * condition buttons, then runs actions. Derived buttons change as their sources do, in order.
+     */
     internal fun updateButtons(dispatch: Boolean) {
+        now = clock()
         changes.clear()
         pressed.clear()
         // Buttons created during an update join the list; index iteration picks them up.
         var index = 0
         while (index < buttons.size) buttons[index++].clearEdges()
+        // A timer that ran out by now ran out before the changes below, which all count as now.
+        index = 0
+        while (index < buttons.size) buttons[index++].expire()
         val overflow = overflowed.getAndSet(false)
         while (true) {
             val change = posted.poll() ?: break
-            change.button.apply(change.down)?.let { changes += change.button; pressed += it }
+            change(change.button, change.down)
         }
         index = 0
         while (index < buttons.size) {
             val button = buttons[index++]
-            (if (overflow) button.catchUp() else null)?.let { changes += button; pressed += it }
-            button.check()?.let { changes += button; pressed += it }
+            if (overflow) button.catchUp()
+            button.check()
         }
         if (!dispatch) return
         index = 0

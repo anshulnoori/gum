@@ -3,6 +3,7 @@ package com.qualcomm.robotcore.eventloop.opmode
 import com.anshulnoori.gum.core.ProgramKind
 import com.anshulnoori.gum.core.Subsystem
 import com.anshulnoori.gum.core.teleop
+import com.anshulnoori.gum.ftc.Axis
 import com.anshulnoori.gum.ftc.Chain
 import com.anshulnoori.gum.ftc.FtcEnvironment
 import com.anshulnoori.gum.ftc.FtcProgram
@@ -144,6 +145,46 @@ class GumOpModeTest {
         val handoff = opMode.takeHandoff()
         assertSame(next, handoff?.next)
         assertNull(opMode.takeHandoff(), "the handoff is taken once")
+    }
+
+    @Test
+    fun `stick and trigger thresholds change from the callback packets, alone and combined`() {
+        val events = CopyOnWriteArrayList<String>()
+        val updates = AtomicInteger()
+        val opMode = GumOpMode(teleop<FtcEnvironment, Unit>("Thresholds", dependencies = {}) {
+            val a = gamepad1.a
+            val trigger = gamepad1.above(Axis.RIGHT_TRIGGER, 0.5)
+            trigger.onPress { events += "trigger press" }
+            trigger.onRelease { events += "trigger release" }
+            val centered = gamepad1.between(Axis.LEFT_STICK_Y, -0.2, 0.2)
+            centered.onPress { events += "centered press" }
+            centered.onRelease { events += "centered release" }
+            (a and gamepad1.below(Axis.LEFT_STICK_X, -0.5)).onPress { events += "a and left" }
+            loop { updates.incrementAndGet() }
+        })
+        init(opMode)
+        opMode.internalStart()
+        eventually("active updates run") { updates.get() > 0 }
+
+        fun send(packet: Gamepad.() -> Unit) =
+            (opMode as OpModeInternal).newGamepadDataAvailable(Gamepad().apply(packet), Gamepad())
+
+        send { right_trigger = 0.6f }
+        send { right_trigger = 0.55f }
+        send { right_trigger = 0.5f }
+        send { left_stick_y = 0.8f }
+        send { left_stick_y = 0.1f }
+        send { left_stick_x = -0.6f }
+        send { left_stick_x = -0.6f; a = true }
+        eventually("every change reaches the session") { events.size >= 5 }
+        Thread.sleep(20)
+        opMode.internalStop()
+
+        assertEquals(
+            listOf("trigger press", "trigger release", "centered release", "centered press", "a and left"),
+            events,
+            "0.5 is not above 0.5; 0.1 is between -0.2 and 0.2; the stick at rest starts centered",
+        )
     }
 
     @Test

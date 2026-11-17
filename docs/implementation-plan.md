@@ -67,7 +67,7 @@ Slice 4 should deliver controller events the same way.
 
 ## 4. Add controller events and group ownership
 
-Status: controller events implemented from the SDK's gamepad callback; see [controller events](lifecycle.md#controller-events).
+Status: controller events implemented from the SDK's gamepad callback, with `and`, `or`, `not`, `debounce`, `multiPress`, `toggled`, `toggleOnPress`, and stick and trigger thresholds; see [controller events](lifecycle.md#controller-events).
 Each update first applies queued button changes in arrival order, then runs press and release actions after START, before Ivy.
 Buttons held through START press only after a release. Conflicts follow Ivy's priority and `ConflictBehavior`.
 Rejecting overlapping requirements in parallel groups remains.
