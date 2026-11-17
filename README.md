@@ -16,7 +16,7 @@ This repository starts with independent Git history. The previous implementation
 - Sloth registers programs and supplies development reload.
 - Routines use Kotlin's built-in coroutines inside Ivy's update; slow sensors read on background threads. Only the OpMode thread writes outputs.
 - Gamepad input comes from the SDK's callback, not polling, including combined, debounced, double-press, toggled, and stick or trigger threshold buttons.
-- Pedro Pathing 3 drives through Ivy commands on a Pedro follower; see the `pedro` module.
+- Pedro Pathing 3 drives through Ivy commands on a Pedro follower; see the `pedro` module. Tuning builds add Pedro's AutoTune through `pedro-tuning`; see [Pedro setup and tuning](docs/pedro.md).
 - Panels shows telemetry, the field, and live-tuned values; Gum sends to it after every update.
 - `debug(program)` adds a separate Driver Station entry for any program whose telemetry starts with Gum's loop time and the time each phase of the update takes; see [Debug programs](docs/lifecycle.md#debug-programs).
 - A program's setup can end with the next program; after the run stops, Gum initializes it without starting it.
@@ -30,6 +30,7 @@ This repository starts with independent Git history. The previous implementation
 - [Research index](docs/research/README.md): source evidence and compatibility limits.
 - [Implemented lifecycle](docs/lifecycle.md): executable interface and cleanup contracts.
 - [Hardware configuration](docs/hardware.md): robot wiring declared in Kotlin, generated into the FTC configuration.
+- [Pedro setup and tuning](docs/pedro.md): a robot's Pedro parts, tuning builds, and the tuning steps.
 
 ## Build and test
 
@@ -40,7 +41,7 @@ Install JDK 17. Then run:
 ```
 
 Run `./gradlew :hardware:test` for the hardware configuration.
-`:ftc` and `:pedro` are Android libraries and also need an Android SDK through `ANDROID_HOME` or `local.properties`.
+`:ftc`, `:pedro`, and `:pedro-tuning` are Android libraries and also need an Android SDK through `ANDROID_HOME` or `local.properties`.
 The Gradle plugin in `gradle-plugin/` is a separate build that FTC apps include through `pluginManagement`.
 
 The wrapper pins Gradle 9.1.0 and verifies its distribution checksum.
