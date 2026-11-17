@@ -125,13 +125,18 @@ class RoutineTest {
     }
 
     @Test
-    fun `an exception from the body stops the OpMode`() {
+    fun `an exception from the body stops the OpMode and shows where the routine was created`() {
+        var line = 0
         val session = session {
-            onStart { routine { nextUpdate(); error("jammed") }.schedule() }
+            val failing = routine { nextUpdate(); error("jammed") }.also { line = Throwable().stackTrace[0].lineNumber }
+            onStart { failing.schedule() }
         }
         val error = assertFailsWith<IllegalStateException> { session.tick() }
         assertEquals("jammed", error.message)
         assertEquals(SessionState.STOPPED, session.state)
+        val creation = error.suppressed.filterIsInstance<RoutineCreation>().single()
+        val site = creation.stackTrace.first()
+        assertEquals("RoutineTest.kt" to line, site.fileName to site.lineNumber, "the first frame is the routine { } call")
     }
 
     private class Gate : Subsystem<Roll>(Roll.OFF) {

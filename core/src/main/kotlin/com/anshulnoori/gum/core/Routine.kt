@@ -32,13 +32,14 @@ import java.util.concurrent.CancellationException
  *
  * When Ivy interrupts or cancels it, the command it is awaiting ends as interrupted, and the routine
  * resumes with a [CancellationException], so its `finally` blocks run. An exception from the body
- * propagates out of Ivy's update and stops the OpMode.
+ * propagates out of Ivy's update and stops the OpMode; it carries a [RoutineCreation] that shows
+ * where the routine was created.
  *
  * Its outcome is [Outcome.FINISHED] when the body returns and [Outcome.INTERRUPTED] when Ivy ends it
  * first. Give it a limit with [withTimeout].
  */
 fun routine(vararg requirements: Any, body: suspend Routine.() -> Unit): Command {
-    val routine = Routine(requirements.toSet())
+    val routine = Routine(requirements.toSet(), RoutineCreation())
     val command = Reported()
     return command
         .requiring(*requirements)
@@ -51,8 +52,23 @@ fun routine(vararg requirements: Any, body: suspend Routine.() -> Unit): Command
         }
 }
 
+/**
+ * Where a routine was created. Gum attaches it to an error the routine's body throws, as a
+ * suppressed exception, so the error shows the `routine { }` call as well as the failing line.
+ */
+class RoutineCreation internal constructor() : Throwable("The routine that failed was created here") {
+    init {
+        // Start the trace at the caller of routine(), not inside Gum.
+        stackTrace = stackTrace.dropWhile { it.className in GUM_FRAMES }.toTypedArray()
+    }
+
+    private companion object {
+        val GUM_FRAMES = setOf(RoutineCreation::class.java.name, "com.anshulnoori.gum.core.RoutineKt")
+    }
+}
+
 @RestrictsSuspension
-class Routine internal constructor(private val requirements: Set<Any>) {
+class Routine internal constructor(private val requirements: Set<Any>, private val creation: RoutineCreation) {
     private var continuation: Continuation<Unit>? = null
     private var child: Command? = null
     private var condition: (() -> Boolean)? = null
@@ -145,7 +161,11 @@ class Routine internal constructor(private val requirements: Set<Any>) {
 
         override fun resumeWith(result: Result<Unit>) {
             finished = true
-            result.exceptionOrNull()?.let { if (it !is CancellationException) throw it }
+            result.exceptionOrNull()?.let {
+                if (it is CancellationException) return
+                it.addSuppressed(creation)
+                throw it
+            }
         }
     }
 }

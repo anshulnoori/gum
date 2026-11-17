@@ -223,6 +223,7 @@ val score = routine(robot.intake, robot.flywheel) {
 - `await(command)` runs a command inside the routine; one that finishes at once costs no update. `waitUntil`, `waitSeconds`, and `nextUpdate` wait.
 - Like Ivy's groups, a routine owns everything it runs: it reserves the subsystems it lists, and `await` fails for a command that needs anything else.
 - When Ivy interrupts or cancels a routine, its awaited command ends as interrupted and the routine's `finally` blocks run. An exception from the body stops the OpMode.
+- Each routine records where it was created. When its body throws, the error carries a suppressed `RoutineCreation` whose stack trace starts at the `routine { }` call, so the log shows which routine failed as well as the failing line. Recording it costs one stack capture each time `routine { }` runs, not each time the routine is scheduled.
 
 ### Outcomes and timeouts
 
