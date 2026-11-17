@@ -305,4 +305,32 @@ class GumOpModeTest {
         assertTrue(sent.any { it.startsWith("Updates") }, "the program's own telemetry reaches the Driver Station")
         assertTrue(sent.none { it.startsWith("Gum") }, sent.toString())
     }
+
+    @Test
+    fun `cleanup runs uninterrupted even when STOP's interrupt arrives after the loop has ended`() {
+        val updates = AtomicInteger()
+        val interrupted = AtomicReference<Boolean>()
+        val opMode = GumOpMode(teleop<FtcEnvironment, Unit>("Slow STOP", dependencies = {}) {
+            loop { updates.incrementAndGet() }
+            onStop { interrupted.set(Thread.currentThread().isInterrupted) }
+            // Cleanup that takes a while, such as hardware writes; it runs before the check above.
+            onStop { val end = System.nanoTime() + 50_000_000; while (System.nanoTime() < end) Unit }
+        })
+        init(opMode)
+        opMode.internalStart()
+        eventually("active updates run") { updates.get() > 100 }
+        // OpModeInternal.internalStop sets the flag, then interrupts. Interrupt only once the loop has
+        // seen the flag and ended, as happens when the event loop thread is slow between the two.
+        opMode.stopRequested = true
+        var seen = updates.get()
+        while (true) {
+            Thread.sleep(10)
+            val now = updates.get()
+            if (now == seen) break
+            seen = now
+        }
+        opMode.executorService.shutdownNow()
+        eventually("the OpMode thread finishes") { opMode.opModeThreadFinished }
+        assertEquals(false, interrupted.get())
+    }
 }

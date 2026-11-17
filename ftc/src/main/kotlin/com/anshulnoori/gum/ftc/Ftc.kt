@@ -326,7 +326,7 @@ internal class GumOpMode(
             this.environment = null
             // The SDK interrupts this thread at STOP. Cleanup runs uninterrupted, so its hardware
             // writes and thread joins work as they did in an iterative OpMode's stop().
-            val interrupted = Thread.interrupted()
+            val interrupted = clearStopInterrupt()
             var next: FtcProgram? = null
             try {
                 session?.stop()
