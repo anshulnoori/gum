@@ -241,4 +241,22 @@ class ProgramTest {
         plain.stop()
         kotlin.test.assertNull(plain.next, "a setup that ends with anything else does not chain")
     }
+
+    @Test
+    fun `debug makes a separate entry that runs the same program, and leaves the original alone`() {
+        val runs = mutableListOf<String>()
+        val auto = autonomous<Unit, Unit>("Auto", group = "Red", description = "Two samples", dependencies = { runs += "graph" }) {
+            runs += "setup"
+        }
+        val debugAuto = debug(auto)
+
+        assertEquals(ProgramMetadata("Auto (Debug)", ProgramKind.AUTONOMOUS, "Red", "Two samples"), debugAuto.metadata)
+        assertEquals(true, debugAuto.debug)
+        assertEquals(false, auto.debug)
+        assertEquals("Auto", auto.name)
+        assertSame(debugAuto, debug(debugAuto), "a debug program is not wrapped twice")
+
+        debugAuto.initialize(Unit).stop()
+        assertEquals(listOf("graph", "setup"), runs)
+    }
 }

@@ -5,6 +5,8 @@ import com.anshulnoori.gum.core.Program
 import com.anshulnoori.gum.core.ProgramKind
 import com.anshulnoori.gum.core.ProgramMetadata
 import com.anshulnoori.gum.core.ProgramScope
+import com.anshulnoori.gum.core.UpdatePhase
+import com.anshulnoori.gum.core.UpdateTiming
 import com.anshulnoori.gum.core.autonomous
 import com.anshulnoori.gum.core.teleop
 import com.anshulnoori.gum.core.utility
@@ -279,6 +281,7 @@ internal object Chain : OnCreateEventLoop, OpModeManagerNotifier.Notifications {
  *
  * Gum owns bulk reads: every hub uses manual caching, cleared once before each update.
  * After each update, Gum sends that update's telemetry to the Driver Station and Panels.
+ * For a program made with `debug`, Gum times every phase of each update and shows [Diagnostics] first.
  */
 internal class GumOpMode(
     val program: FtcProgram,
@@ -310,12 +313,13 @@ internal class GumOpMode(
             environment = FtcEnvironment(hardware, hardwareMap, PanelsMirroredTelemetry(telemetry), gamepad1, gamepad2)
             environment.chain = chain
             this.environment = environment
-            session = program.initialize(environment)
+            val diagnostics = if (program.debug) Diagnostics(UpdateTiming()) else null
+            session = program.initialize(environment, diagnostics?.timing)
             sendTelemetry()
-            while (opModeInInit()) update(hubs, environment, session::tick)
+            while (opModeInInit()) update(hubs, environment, diagnostics, session::tick)
             if (!isStopRequested) {
-                update(hubs, environment, session::start)
-                while (opModeIsActive()) update(hubs, environment, session::tick)
+                update(hubs, environment, diagnostics, session::start)
+                while (opModeIsActive()) update(hubs, environment, diagnostics, session::tick)
             }
             ended = true
         } finally {
@@ -338,11 +342,20 @@ internal class GumOpMode(
         }
     }
 
-    private inline fun update(hubs: List<LynxModule>, environment: FtcEnvironment, step: () -> Unit) {
+    private inline fun update(hubs: List<LynxModule>, environment: FtcEnvironment, diagnostics: Diagnostics?, step: () -> Unit) {
+        val timing = diagnostics?.timing
+        // Added first so the timing heads the telemetry; adding counts as Other.
+        diagnostics?.addTo(environment.telemetry)
+        timing?.begin()
         for (hub in hubs) hub.clearBulkCache()
         environment.sample()
+        timing?.end(UpdatePhase.INPUT)
         step()
-        sendTelemetry()
+        timing?.end(UpdatePhase.PROGRAM)
+        telemetry.update()
+        timing?.end(UpdatePhase.TELEMETRY)
+        sendToPanels()
+        timing?.end(UpdatePhase.PANELS)
     }
 
     private fun sendTelemetry() {

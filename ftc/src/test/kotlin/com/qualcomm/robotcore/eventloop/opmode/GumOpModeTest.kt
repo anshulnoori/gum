@@ -2,6 +2,7 @@ package com.qualcomm.robotcore.eventloop.opmode
 
 import com.anshulnoori.gum.core.ProgramKind
 import com.anshulnoori.gum.core.Subsystem
+import com.anshulnoori.gum.core.debug
 import com.anshulnoori.gum.core.teleop
 import com.anshulnoori.gum.ftc.Axis
 import com.anshulnoori.gum.ftc.Chain
@@ -12,6 +13,7 @@ import com.anshulnoori.gum.ftc.Robot
 import com.anshulnoori.gum.ftc.program
 import com.anshulnoori.gum.hardware.RobotConfig
 import com.anshulnoori.gum.ftc.gamepad1
+import com.anshulnoori.gum.ftc.telemetry
 import com.qualcomm.robotcore.hardware.Gamepad
 import com.qualcomm.robotcore.hardware.HardwareMap
 import com.qualcomm.robotcore.robocol.TelemetryMessage
@@ -33,8 +35,15 @@ import kotlin.test.fail
 // thread, its start and stop flip the flags that thread watches, and its stop interrupts the thread
 // and waits for it, as OpModeManagerImpl does on the event loop thread.
 class GumOpModeTest {
+    /** Every line the Driver Station received, and each message's lines in order. */
+    private val sent = CopyOnWriteArrayList<String>()
+    private val messages = CopyOnWriteArrayList<List<String>>()
+
     private val services = object : OpModeServices {
-        override fun refreshUserTelemetry(telemetry: TelemetryMessage, sInterval: Double) {}
+        override fun refreshUserTelemetry(telemetry: TelemetryMessage, sInterval: Double) {
+            sent += telemetry.dataStrings.values
+            messages += telemetry.dataStrings.values.toList()
+        }
         override fun requestOpModeStop(opModeToStopIfActive: OpMode) {}
     }
 
@@ -263,5 +272,37 @@ class GumOpModeTest {
         assertEquals(true, createdBySetup.get(), "created before setup, though setup never reads it")
         assertEquals(listOf(State.OFF), graph.get().roller.entered)
         opMode.internalStop()
+    }
+
+    @Test
+    fun `a debug program shows loop time and every phase first in its telemetry, and the program it wraps shows neither`() {
+        val updates = AtomicInteger()
+        val plain = teleop<FtcEnvironment, Unit>("Main", dependencies = {}) {
+            loop { telemetry.addData("Updates", updates.incrementAndGet()) }
+        }
+        val debugged = GumOpMode(debug(plain))
+        init(debugged)
+        debugged.internalStart()
+        eventually("timing reaches the Driver Station") { sent.any { it.startsWith("Gum phases (ms)") } }
+        debugged.internalStop()
+        val loop = sent.last { it.startsWith("Gum loop") }
+        assertTrue(Regex("Gum loop : [0-9.]+ ms avg, [0-9.]+ ms max, [0-9]+ Hz").matches(loop), loop)
+        val phases = sent.last { it.startsWith("Gum phases (ms)") }
+        for (phase in listOf("Input", "Buttons", "Ivy", "Subsystems", "Program", "Telemetry", "Panels", "Other")) {
+            assertTrue(Regex("\\b$phase [0-9]+\\.[0-9]{2}\\b").containsMatchIn(phases), phases)
+        }
+        val timed = messages.filter { lines -> lines.any { it.startsWith("Gum loop") } }
+        assertTrue(timed.all { it[0].startsWith("Gum loop") && it[1].startsWith("Gum phases") && it[2].startsWith("Updates") }, timed.toString())
+        assertTrue(updates.get() > 0, "the wrapped program's own setup and loop run")
+
+        sent.clear()
+        val quiet = GumOpMode(plain)
+        init(quiet)
+        quiet.internalStart()
+        // A window is one second; by now a debug program would have shown it.
+        Thread.sleep(1_500)
+        quiet.internalStop()
+        assertTrue(sent.any { it.startsWith("Updates") }, "the program's own telemetry reaches the Driver Station")
+        assertTrue(sent.none { it.startsWith("Gum") }, sent.toString())
     }
 }

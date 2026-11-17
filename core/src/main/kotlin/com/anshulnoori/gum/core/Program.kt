@@ -25,8 +25,13 @@ class Program<E, D> internal constructor(
     val metadata: ProgramMetadata,
     private val dependencies: ProgramScope<E>.() -> D,
     private val setup: ProgramScope<E>.(D) -> Any?,
+    /** True for a program made with [debug]: its host times each update and shows the timing. */
+    val debug: Boolean = false,
 ) {
     val name: String get() = metadata.name
+
+    internal fun debugged(): Program<E, D> =
+        if (debug) this else Program(metadata.copy(name = "$name (Debug)"), dependencies, setup, debug = true)
 
     /**
      * Creates a session on the calling thread and runs dependency creation and setup once.
@@ -37,8 +42,11 @@ class Program<E, D> internal constructor(
      * An active tick runs button actions, advances Ivy's global scheduler, updates every [Subsystem],
      * and runs the program's own [ProgramScope.loop] callbacks. STOP runs the program's cleanup,
      * returns subsystems to their initial states, and finally clears the scheduler.
+     *
+     * With [timing], each tick ends the buttons, Ivy, and subsystems phases as it finishes them; the
+     * host times the rest.
      */
-    fun initialize(environment: E): OpModeSession {
+    fun initialize(environment: E, timing: UpdateTiming? = null): OpModeSession {
         Scheduler.reset()
         val scope = ProgramScope(environment)
         val session = OpModeSession(scope)
@@ -48,10 +56,10 @@ class Program<E, D> internal constructor(
             scope.onStop { scope.resetSubsystems() }
             // Runs before subsystems reset: readers stop first.
             scope.onStop { scope.stopBackground() }
-            scope.initLoop { scope.updateButtons(dispatch = false) }
-            scope.loop { scope.updateButtons(dispatch = true) }
-            scope.loop { Scheduler.execute() }
-            scope.loop { scope.updateSubsystems() }
+            scope.initLoop { scope.updateButtons(dispatch = false); timing?.end(UpdatePhase.BUTTONS) }
+            scope.loop { scope.updateButtons(dispatch = true); timing?.end(UpdatePhase.BUTTONS) }
+            scope.loop { Scheduler.execute(); timing?.end(UpdatePhase.IVY) }
+            scope.loop { scope.updateSubsystems(); timing?.end(UpdatePhase.SUBSYSTEMS) }
             val graph = scope.dependencies()
             session.chained = scope.setup(graph) as? Program<*, *>
             scope.enterInitialStates()
@@ -60,6 +68,12 @@ class Program<E, D> internal constructor(
         return session
     }
 }
+
+/**
+ * The same program under its own entry, named "<name> (Debug)", whose host shows loop and per-phase
+ * timing at the top of its telemetry: `val debugAuto = debug(auto)`. Works for every kind of program.
+ */
+fun <E, D> debug(program: Program<E, D>): Program<E, D> = program.debugged()
 
 fun <E, D> teleop(
     name: String,

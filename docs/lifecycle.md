@@ -310,6 +310,36 @@ object IntakeTuning {
 }
 ```
 
+## Debug programs
+
+`debug(program)` makes a separate program that runs the same setup and shows Gum's timing at the top of its telemetry, on the Driver Station and in Panels. Declare it next to the program it wraps; Gum registers it like any other public top-level program, as its own entry named "<name> (Debug)" with the same kind, group, and description:
+
+```kotlin
+val auto = autonomous("Auto") { robot -> /* ... */ }
+val debugAuto = debug(auto)
+
+val main = teleop("Main") { robot -> /* ... */ }
+val debugMain = debug(main)
+```
+
+The original program shows no timing and does no timing work. A debug program shows two lines:
+
+```text
+Gum loop : 4.31 ms avg, 9.80 ms max, 232 Hz
+Gum phases (ms) : Input 0.02, Buttons 0.01, Ivy 0.30, Subsystems 3.10, Program 0.40, Telemetry 0.20, Panels 0.10, Other 0.18
+```
+
+- The loop line is the time from the start of one update to the start of the next: its average and maximum over the last second, and updates per second.
+- The phases line is the average time per update in each phase, in the order they run: Input (clearing the bulk cache and taking the newest gamepad packet), Buttons, Ivy (`Scheduler.execute`, including routines), Subsystems (automatic transitions and `during`), Program (the program's `initLoop`, `onStart`, or `loop` callbacks), Telemetry (sending to the Driver Station), and Panels. Other is the time outside every phase, such as the SDK's own checks between updates and adding these two lines.
+- A hub's bulk read happens at the first hardware read after the cache clears, so its time counts in the phase that reads first, usually Subsystems.
+- Ivy and Subsystems run only after START, so they show 0.00 in INIT. The first second after START also includes the last INIT updates and the START update. Nothing shows until the first second has passed.
+- Gum reads the clock once per phase and adds to fixed counters, so timing allocates nothing per update. It formats the two lines once per second; each update adds the same two strings again.
+- A chain runs the program setup ends with, as it is. A debug auto that ends with `main` chains to the plain TeleOp; end it with `debugMain` to keep the timing.
+
+`UpdateTiming` in `core` does the timing, so another host can show the same phases: it calls `begin()` at the start of each update and `end(phase)` as each phase finishes, and passes it to `Program.initialize`, whose ticks end the Buttons, Ivy, and Subsystems phases.
+
+Status: JVM-tested. Not yet run on a Control Hub; the figures above are an illustration, not a measurement.
+
 ## FTC host
 
 The generated `teleop`, `autonomous`, and `utility` builders give setup the session's robot graph and an `FtcEnvironment`:
@@ -323,7 +353,7 @@ Each SDK run is a `LinearOpMode` whose `runOpMode` checks the active configurati
 All of this runs on the SDK's one OpMode thread, which satisfies the session thread contract. Updates run back to back; the SDK's iterative `OpMode` would sleep 1 ms after each and copy both gamepads before each.
 The SDK interrupts the OpMode thread at STOP; cleanup runs with the interrupt cleared, then restores it.
 The host owns bulk reads: it sets every hub to manual caching and clears the cache once before each update.
-After each update, the host sends Driver Station telemetry, then the update's telemetry and field drawing to Panels.
+For a [debug program](#debug-programs), the host adds the timing lines before each update. After each update, the host sends Driver Station telemetry, then the update's telemetry and field drawing to Panels.
 FTC SDK 12.0 `OpModeMeta` carries the description; whether the Driver Station shows it is unverified.
 
 Status: compiled into an APK with FTC SDK 12.0 and Sloth 0.3.2. JVM tests run `GumOpMode` through every phase, by replaying the SDK's calls; no test covers `GumProgramScanner`. Not yet run on a Control Hub, so Sloth registration and reload are unverified.
