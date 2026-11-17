@@ -13,6 +13,8 @@ import com.qualcomm.hardware.lynx.LynxModule
 import android.content.Context
 import com.qualcomm.ftccommon.FtcEventLoop
 import com.qualcomm.robotcore.eventloop.opmode.GumCallbackOpMode
+import com.qualcomm.robotcore.eventloop.opmode.OpMode
+import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerNotifier
 import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerImpl
 import com.qualcomm.robotcore.hardware.Gamepad
 import com.qualcomm.robotcore.hardware.HardwareMap
@@ -24,6 +26,7 @@ import dev.frozenmilk.sinister.sdk.opmodes.SinisterRegisteredOpModes
 import dev.frozenmilk.sinister.targeting.TeamCodeSearch
 import org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta
 import java.lang.reflect.Field
+import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Modifier
 
 /** FTC objects for one OpMode session. */
@@ -49,6 +52,11 @@ class FtcEnvironment internal constructor(
     internal fun report(data1: Gamepad, data2: Gamepad) {
         controller1?.report(data1)
         controller2?.report(data2)
+    }
+
+    internal fun sample() {
+        controller1?.sample()
+        controller2?.sample()
     }
 }
 
@@ -107,7 +115,8 @@ val hardware: Hardware
  * Called by the `teleop`, `autonomous`, and `utility` builders the Gum Gradle plugin generates.
  * Each INIT checks that the active configuration has every device [config] declares. A run that
  * starts from the Driver Station creates a new chain graph with [chain]; a chained run reuses its
- * predecessor's. [robot] then creates this run's graph inside the chain graph, for [setup].
+ * predecessor's. [robot] then creates this run's graph inside the chain graph and reads every
+ * accessor it declares, so each subsystem exists, and enters its initial mode, at INIT; then [setup] runs.
  */
 fun <C : Any, R : Robot> program(
     kind: ProgramKind,
@@ -123,12 +132,31 @@ fun <C : Any, R : Robot> program(
         environment.hardware.requireDevices(config)
         @Suppress("UNCHECKED_CAST")
         val graph = environment.chain as C? ?: chain().also { environment.chain = it }
-        robot(graph)
+        robot(graph).also(::readAccessors)
     }
     return when (kind) {
         ProgramKind.TELEOP -> teleop(name, group, description, dependencies, setup)
         ProgramKind.AUTONOMOUS -> autonomous(name, group, description, dependencies, setup)
         ProgramKind.UTILITY -> utility(name, group, description, dependencies, setup)
+    }
+}
+
+/**
+ * Calls every accessor TeamCode's `RobotGraph` declares, such as `val intake: Intake`. Metro creates
+ * a scoped value on first access, so this creates every subsystem now, not when code first uses it.
+ */
+private fun readAccessors(robot: Robot) {
+    val graphs = generateSequence<Class<*>>(robot.javaClass) { it.superclass }
+        .flatMap { it.interfaces.asSequence() }
+        .filter { Robot::class.java.isAssignableFrom(it) && it != Robot::class.java }
+    for (method in graphs.flatMap { it.methods.asSequence() }.distinct()) {
+        if (method.parameterTypes.isNotEmpty() || method.declaringClass == Robot::class.java) continue
+        if (Modifier.isStatic(method.modifiers) || method.returnType == Void.TYPE) continue
+        try {
+            method.invoke(robot)
+        } catch (error: InvocationTargetException) {
+            throw error.targetException
+        }
     }
 }
 
@@ -178,18 +206,49 @@ private fun meta(metadata: ProgramMetadata): OpModeMeta = OpModeMeta.Builder()
  * Puts the next program of a chain into INIT. The next program takes over the Driver Station entry
  * with its name, so the Driver Station shows its name and kind, until that run stops; then the
  * entry's original program returns. It waits in INIT for a separate START.
+ *
+ * The SDK stops a run in one of two orders. Driver Station STOP queues the SDK's stop OpMode and then
+ * stops the run. `requestOpModeStop`, a `runOpMode` that returns, and app teardown stop the run and
+ * then queue the stop OpMode, which replaces anything queued while the run stopped. Either way the
+ * stop OpMode initializes next, so the next program is queued then.
  */
 @Suppress("unused")
-internal object Chain : OnCreateEventLoop {
+internal object Chain : OnCreateEventLoop, OpModeManagerNotifier.Notifications {
     @Volatile
     private var manager: OpModeManagerImpl? = null
 
-    // Sloth calls this when the Robot Controller creates its event loop.
+    /** The program to initialize when the stop OpMode next initializes, with its chain graph. */
+    @Volatile
+    private var pending: Pair<FtcProgram, Any?>? = null
+
+    // Sloth calls this when the Robot Controller creates its event loop, including after a restart.
     override fun onCreateEventLoop(context: Context, ftcEventLoop: FtcEventLoop) {
-        manager = ftcEventLoop.opModeManager
+        pending = null
+        manager = ftcEventLoop.opModeManager.also { it.registerListener(this) }
     }
 
-    fun initialize(program: FtcProgram, chain: Any?) {
+    // The SDK calls these on its event loop thread. It calls onOpModePostStop once the run's
+    // thread has finished, and again for the same run when the second order above swaps it out.
+    override fun onOpModePostStop(opMode: OpMode) {
+        val run = opMode as? GumOpMode ?: return
+        val handoff = run.takeHandoff() ?: return
+        if (run.chained) restore(run.program.metadata.name, run.original)
+        handoff.next?.let { pending = it to handoff.chain }
+    }
+
+    override fun onOpModePreInit(opMode: OpMode) {
+        val (program, chain) = pending ?: return
+        pending = null
+        // Anything else initializing means someone chose another program instead.
+        if (opMode is OpModeManagerImpl.DefaultOpMode) initialize(program, chain)
+    }
+
+    override fun onOpModePreStart(opMode: OpMode) {}
+
+    /** Puts [program] into INIT in the SDK. JVM tests, which have no Robot Controller, replace it. */
+    internal var initialize: (program: FtcProgram, chain: Any?) -> Unit = ::takeOverEntry
+
+    private fun takeOverEntry(program: FtcProgram, chain: Any?) {
         val meta = meta(program.metadata)
         val registered = SinisterRegisteredOpModes.getOpMode(meta.name) as? GumOpMode
         // A chain that runs through the same entry twice restores the entry's first program.
@@ -199,19 +258,20 @@ internal object Chain : OnCreateEventLoop {
         checkNotNull(manager) { "The Robot Controller has no event loop" }.initOpMode(meta.name)
     }
 
-    fun restore(name: String, original: FtcProgram?) {
+    private fun restore(name: String, original: FtcProgram?) {
         SinisterRegisteredOpModes.unregister(name)
         if (original != null) SinisterRegisteredOpModes.register(meta(original.metadata)) { GumOpMode(original) }
     }
 }
 
 /**
- * Drives one Gum session per SDK run. The SDK calls every method below on the OpMode thread,
- * which matches the session's single-thread contract. Each `init` starts a fresh session.
- * After STOP, a program that set up a next program hands off to it through [Chain].
+ * Runs one Gum session per SDK run, all on the SDK's OpMode thread, which matches the session's
+ * single-thread contract: setup, then an update loop until START, START, then an update loop until
+ * STOP, then cleanup. Updates run back to back, without the iterative OpMode's 1 ms sleep.
+ * After cleanup, a program that set up a next program hands off to it through [Chain].
  *
- * Gum owns bulk reads: every hub uses manual caching, cleared once before each dispatch.
- * After each dispatch, Gum sends that update's telemetry and field drawing to Panels.
+ * Gum owns bulk reads: every hub uses manual caching, cleared once before each update.
+ * After each update, Gum sends that update's telemetry to the Driver Station and Panels.
  */
 internal class GumOpMode(
     val program: FtcProgram,
@@ -220,65 +280,70 @@ internal class GumOpMode(
     /** For a chained run, its chain graph; null starts a new chain. */
     private val chain: Any? = null,
 ) : GumCallbackOpMode() {
-    private val chained = chain != null
-    private var session: OpModeSession? = null
+    val chained = chain != null
     @Volatile private var environment: FtcEnvironment? = null
-    private var hubs: List<LynxModule> = emptyList()
 
-    override fun init() {
-        val hardware = Hardware(hardwareMap)
-        hubs = hardwareMap.getAll(LynxModule::class.java)
-        hubs.forEach { it.bulkCachingMode = LynxModule.BulkCachingMode.MANUAL }
-        currentHardware.set(hardware)
+    /** What this run leaves for [Chain] once it has finished: the next program and the chain graph. */
+    class Handoff(val next: FtcProgram?, val chain: Any?)
+
+    @Volatile private var handoff: Handoff? = null
+
+    /** Returns this run's handoff once, after it has finished; null before that and afterward. */
+    fun takeHandoff(): Handoff? = handoff.also { handoff = null }
+
+    override fun runOpMode() {
+        var environment: FtcEnvironment? = null
+        var session: OpModeSession? = null
+        var ended = false
         try {
-            val environment = FtcEnvironment(hardware, hardwareMap, PanelsMirroredTelemetry(telemetry), gamepad1, gamepad2)
+            val hardware = Hardware(hardwareMap)
+            val hubs = hardwareMap.getAll(LynxModule::class.java)
+            hubs.forEach { it.bulkCachingMode = LynxModule.BulkCachingMode.MANUAL }
+            currentHardware.set(hardware)
+            environment = FtcEnvironment(hardware, hardwareMap, PanelsMirroredTelemetry(telemetry), gamepad1, gamepad2)
             environment.chain = chain
             this.environment = environment
             session = program.initialize(environment)
-            sendToPanels()
-        } catch (error: Throwable) {
-            currentHardware.remove()
-            throw error
+            sendTelemetry()
+            while (opModeInInit()) update(hubs, environment, session::tick)
+            if (!isStopRequested) {
+                update(hubs, environment, session::start)
+                while (opModeIsActive()) update(hubs, environment, session::tick)
+            }
+            ended = true
+        } finally {
+            this.environment = null
+            // The SDK interrupts this thread at STOP. Cleanup runs uninterrupted, so its hardware
+            // writes and thread joins work as they did in an iterative OpMode's stop().
+            val interrupted = Thread.interrupted()
+            var next: FtcProgram? = null
+            try {
+                session?.stop()
+                telemetry.update()
+                // A run that failed does not chain.
+                @Suppress("UNCHECKED_CAST")
+                if (ended) next = session?.next as FtcProgram?
+            } finally {
+                currentHardware.remove()
+                handoff = Handoff(next, environment?.chain)
+                if (interrupted) Thread.currentThread().interrupt()
+            }
         }
     }
 
-    override fun init_loop() {
-        clearBulkCache()
-        session?.tick()
-        sendToPanels()
+    private inline fun update(hubs: List<LynxModule>, environment: FtcEnvironment, step: () -> Unit) {
+        for (hub in hubs) hub.clearBulkCache()
+        environment.sample()
+        step()
+        sendTelemetry()
     }
 
-    override fun start() {
-        clearBulkCache()
-        session?.start()
-        sendToPanels()
-    }
-
-    override fun loop() {
-        clearBulkCache()
-        session?.tick()
+    private fun sendTelemetry() {
+        telemetry.update()
         sendToPanels()
     }
 
     override fun onGamepadData(gamepad1: Gamepad, gamepad2: Gamepad) {
         environment?.report(gamepad1, gamepad2)
     }
-
-    override fun stop() {
-        val current = session
-        val chainGraph = environment?.chain
-        session = null
-        environment = null
-        hubs = emptyList()
-        try {
-            current?.stop()
-        } finally {
-            currentHardware.remove()
-            if (chained) Chain.restore(program.metadata.name, original)
-        }
-        @Suppress("UNCHECKED_CAST")
-        (current?.next as FtcProgram?)?.let { Chain.initialize(it, chainGraph) }
-    }
-
-    private fun clearBulkCache() = hubs.forEach { it.clearBulkCache() }
 }

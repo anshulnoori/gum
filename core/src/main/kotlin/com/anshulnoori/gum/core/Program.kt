@@ -30,6 +30,7 @@ class Program<E, D> internal constructor(
 
     /**
      * Creates a session on the calling thread and runs dependency creation and setup once.
+     * Every [Subsystem] created by then enters its initial mode, still in INIT.
      * A failure runs registered cleanup before propagating the original error.
      *
      * Every tick first samples each [Button]. An INIT tick then runs [ProgramScope.initLoop] callbacks.
@@ -53,6 +54,7 @@ class Program<E, D> internal constructor(
             scope.loop { scope.updateSubsystems() }
             val graph = scope.dependencies()
             session.chained = scope.setup(graph) as? Program<*, *>
+            scope.enterInitialStates()
         }
         scope.finishSetup()
         return session
@@ -178,6 +180,11 @@ class ProgramScope<out E> internal constructor(
             changes[index].run(pressed[index]) { !stopped }
             index++
         }
+    }
+
+    internal fun enterInitialStates() {
+        var index = 0
+        while (index < subsystems.size) subsystems[index++].enterInitialState()
     }
 
     // Subsystems created during an update join the list; index iteration picks them up.

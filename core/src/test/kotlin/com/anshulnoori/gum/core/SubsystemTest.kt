@@ -78,6 +78,18 @@ class SubsystemTest {
     }
 
     @Test
+    fun `a subsystem enters its initial mode at INIT, before anything reads it, and not again at START`() {
+        lateinit var roller: Roller
+        val session = teleop<Unit, Roller>("Test", dependencies = { Roller() }) { roller = it }.initialize(Unit)
+        assertEquals(listOf(Mode.OFF), roller.entered)
+        session.tick()
+        session.start()
+        session.tick()
+        assertEquals(listOf(Mode.OFF), roller.entered)
+        session.stop()
+    }
+
+    @Test
     fun `a move transitions does not allow leaves the mode unchanged`() {
         val (session, roller) = session { GuardedRoller() }
         roller.request(Mode.COLLECTING).schedule()

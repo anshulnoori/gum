@@ -12,6 +12,9 @@ android {
         minSdk = 24
     }
 
+    // The SDK logs through android.util.Log, which JVM tests stub out.
+    testOptions.unitTests.isReturnDefaultValues = true
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
@@ -35,6 +38,8 @@ dependencies {
     compileOnly("org.firstinspires.ftc:FtcCommon:12.0.0")
 
     testImplementation(kotlin("test-junit"))
-    // Telemetry, for the Panels test.
+    // The SDK's OpMode lifecycle, for the OpMode and Panels tests.
     testImplementation("org.firstinspires.ftc:RobotCore:12.0.0")
+    testImplementation("org.firstinspires.ftc:Hardware:12.0.0")
+    testImplementation("org.firstinspires.ftc:FtcCommon:12.0.0")
 }

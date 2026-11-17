@@ -17,8 +17,9 @@ import ru.nsk.kstatemachine.statemachine.processEventBlocking
  * A subclass lists its modes as an enum, sets its outputs in [enter], and exposes commands built
  * with [request] and [reach]. It can restrict moves between modes and add automatic moves with
  * [transitions], and run feedback control in [loop]. Gum builds the state machine; on every update
- * after commands run, it takes automatic moves and then calls [loop]. STOP returns the subsystem
- * to [initial].
+ * after commands run, it takes automatic moves and then calls [loop]. The subsystem enters
+ * [initial] at INIT, once setup has run, or on its first update if it is created later. STOP returns
+ * the subsystem to [initial].
  *
  * Construct a subsystem while an OpMode runs, on its thread; it joins that session.
  */
@@ -97,6 +98,10 @@ abstract class Subsystem<M : Enum<M>>(private val initial: M) {
     private val machine: StateMachine by lazy { build() }
 
     private val automatic: List<Rule<M>> by lazy { transitions?.rules.orEmpty().filter { it.condition != null } }
+
+    internal fun enterInitialState() {
+        machine
+    }
 
     internal fun update() {
         val mode = mode

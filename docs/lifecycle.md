@@ -79,6 +79,7 @@ val driverTeleOp = teleop("Driver") { robot -> }
 - A run stopped during INIT chains nothing. Setup that ends with anything other than a program chains nothing.
 - Every run belongs to a chain. A run started from the Driver Station starts a new chain; a chained run joins its predecessor's.
 - The next program is created after the previous session's cleanup and subsystem resets.
+- A run that fails chains nothing.
 - In FTC, the next program takes over the Driver Station entry with its own name, so the Driver Station shows its name and kind, and the entry's original program returns after that run.
 
 ### Chain scope
@@ -93,7 +94,9 @@ class PoseMemory { var pose = Pose() }
 
 The Gum Gradle plugin generates a Metro graph for `ChainScope` that each run's `RobotGraph` extends, so per-run subsystems can inject chain values. A chain value must not hold hardware; each run gets its devices again.
 
-Status: the core contract and chain-graph reuse are JVM-tested. Initializing the next OpMode from `stop()` has not run on a Control Hub.
+In FTC, the host queues the next program when the SDK's stop OpMode initializes, after the run has stopped. The SDK stops a run in one of two orders: Driver Station STOP queues the stop OpMode and then stops the run, while `requestOpModeStop`, a `runOpMode` that returns, and app teardown stop the run and then queue the stop OpMode over anything queued during the stop. Queuing the next program when the stop OpMode initializes works for both.
+
+Status: the core contract is JVM-tested, and so is the host's handoff for both stop orders, by replaying the SDK's calls. Chain-graph reuse is not tested. Chaining has not run on a Control Hub.
 
 ## Ivy commands
 
@@ -134,7 +137,7 @@ class Intake(
 - A subsystem joins the session running on its thread when it is constructed; constructing one outside a session fails.
 - `request(mode)` is an Ivy command that reserves the subsystem, moves to `mode`, and finishes at once. A move `transitions` does not list leaves the mode unchanged.
 - `whenever` makes a move automatic: Gum takes the first matching one each update, after commands. Commands cannot request automatic moves.
-- `enter` runs on every entry, including the initial mode, which Gum enters on first use.
+- `enter` runs on every entry, including the initial mode, which each subsystem enters at INIT, after setup. A subsystem created later enters it on its first update.
 - STOP returns each subsystem to its initial mode, whatever `transitions` allows.
 
 Mechanisms with feedback hold data beside their mode and run control in `loop`:
@@ -185,7 +188,7 @@ val main = teleop("Main") { robot ->
 - A button held through START, or down when first used, presses only after a release.
 - `whileHeld { command }` schedules a fresh command on press and cancels it on release. `Subsystem.hold(mode)` enters `mode`, keeps running, and returns to the initial mode when cancelled or interrupted, so a newer hold on the same subsystem takes over.
 - STOP from an action skips the remaining actions.
-- Programs use `gamepad1`, `gamepad2`, `telemetry`, and `hardwareMap` directly. The gamepads are `Controller`s: every SDK button as a `Button` (PlayStation and Xbox names are the same button), sticks and triggers as `Double`, and `raw` for the SDK gamepad.
+- Programs use `gamepad1`, `gamepad2`, `telemetry`, and `hardwareMap` directly. The gamepads are `Controller`s: every SDK button as a `Button` (PlayStation and Xbox names are the same button), sticks and triggers as `Double`, and `raw` for the SDK gamepad. Sticks and triggers also come from the SDK's callback: each update reads the newest packet that arrived before it started. `raw` is copied on another thread, so values read from it can mix two packets.
 - `Button { condition }` checks a condition at the start of each update, for inputs with no events, such as a sensor threshold. Hub sensors have no SDK callbacks; they change when Gum bulk-reads the hubs, once per update.
 
 ## Routines
@@ -229,6 +232,7 @@ interface RobotGraph : Robot {
 ```
 
 `@SingleIn(OpModeScope::class)` gives each run one intake. Metro uses a constructor default when the graph has no binding for that parameter. `Robot` supplies `battery`.
+Each INIT reads every accessor `RobotGraph` declares before setup runs, so every subsystem exists, and enters its initial mode, during INIT, even one a program first uses after START.
 
 ## Pedro Pathing
 
@@ -274,11 +278,11 @@ Gum registers every public top-level program in the `org.firstinspires.ftc.teamc
 `GumProgramScanner` is a Sloth `OpModeScanner`. Sloth runs it when the Robot Controller app starts and after each hot reload (`./gradlew :TeamCode:deploySloth`), replacing the previous registrations.
 Make a program `private` to hide it from the Driver Station.
 
-Each SDK run checks the active configuration for every device the [hardware configuration](hardware.md) declares, then initializes a new session in `init`, ticks it in `init_loop` and `loop`, starts it in `start`, and stops it in `stop`.
-The SDK calls these methods on one OpMode thread, which satisfies the session thread contract.
-The host owns bulk reads: it sets every hub to manual caching and clears the cache once before each dispatch.
-The SDK updates Driver Station telemetry after each dispatch.
-Then the host sends the update's telemetry and field drawing to Panels.
+Each SDK run is a `LinearOpMode` whose `runOpMode` checks the active configuration for every device the [hardware configuration](hardware.md) declares, initializes a new session, ticks it until START, starts it, ticks it until STOP, and stops it in a `finally` block.
+All of this runs on the SDK's one OpMode thread, which satisfies the session thread contract. Updates run back to back; the SDK's iterative `OpMode` would sleep 1 ms after each and copy both gamepads before each.
+The SDK interrupts the OpMode thread at STOP; cleanup runs with the interrupt cleared, then restores it.
+The host owns bulk reads: it sets every hub to manual caching and clears the cache once before each update.
+After each update, the host sends Driver Station telemetry, then the update's telemetry and field drawing to Panels.
 FTC SDK 12.0 `OpModeMeta` carries the description; whether the Driver Station shows it is unverified.
 
 Status: compiled into an APK with FTC SDK 12.0 and Sloth 0.3.2; a JVM check confirmed which fields the scanner selects. Not yet run on a Control Hub, so Sloth registration and reload are unverified.

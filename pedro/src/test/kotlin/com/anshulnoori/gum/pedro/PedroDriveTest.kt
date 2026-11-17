@@ -1,6 +1,7 @@
 package com.anshulnoori.gum.pedro
 
 import com.anshulnoori.gum.core.teleop
+import com.bylazar.field.Canvas
 import com.bylazar.field.Circle
 import com.bylazar.field.PanelsField
 import com.pedropathing.algorithm.Algorithm
@@ -10,9 +11,13 @@ import com.pedropathing.follower.Follower
 import com.pedropathing.localization.Localizer
 import com.pedropathing.localization.MotionState
 import com.pedropathing.math.Pose
+import com.pedropathing.paths.AtomicPath
+import com.pedropathing.paths.curves.Line
+import com.pedropathing.paths.interpolator.Interpolator
 import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertSame
 
 class PedroDriveTest {
     private val calls = mutableListOf<String>()
@@ -46,6 +51,7 @@ class PedroDriveTest {
         when (name) {
             "calculateHold" -> DrivePowers.zero()
             "isBusy" -> true
+            "atParametricEnd" -> false
             else -> null
         }
     }
@@ -75,5 +81,22 @@ class PedroDriveTest {
         session.stop()
         assertEquals(PedroDrive.Mode.IDLE, drive.mode)
         assertEquals(listOf("stop"), calls)
+    }
+
+    @Test
+    fun `a path scheduled at START is followed even when setup never touched the drive`() {
+        val path = AtomicPath(Line(Pose(0.0, 0.0, 0.0), Pose(24.0, 0.0, 0.0)), Interpolator.constant(0.0), emptyList())
+        lateinit var drive: PedroDrive
+        val session = teleop<Unit, PedroDrive>("Auto", dependencies = { PedroDrive(Follower(localizer, drivetrain, algorithm)) }) {
+            drive = it
+            onStart { drive.follow(path).schedule() }
+        }.initialize(Unit)
+        session.start()
+        session.tick()
+        assertEquals(PedroDrive.Mode.FOLLOWING, drive.mode, "entering IDLE at INIT, not on the first update, keeps the path")
+        assertSame(path, drive.follower.currentPath())
+        session.stop()
+        // The Panels field is shared, and the other test counts what is drawn on it.
+        PanelsField.field.canvas = Canvas()
     }
 }

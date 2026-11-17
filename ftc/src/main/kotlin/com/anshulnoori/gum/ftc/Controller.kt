@@ -8,11 +8,15 @@ import com.qualcomm.robotcore.hardware.Gamepad
  *
  * Buttons change from the SDK's gamepad callback, not by polling: each change the Driver Station
  * sends reaches the session at its next update, in order. PlayStation and Xbox names are the same
- * button and read either SDK field. Sticks and triggers read the SDK's gamepad, which the SDK
- * updates before each `init_loop` and `loop`.
+ * button and read either SDK field. Sticks and triggers come from the same callback: each update
+ * reads the latest packet that arrived before it started, so every value in one update comes from
+ * one packet.
  */
 class Controller internal constructor(
-    /** The SDK gamepad, for rumble, LEDs, and anything this class does not cover. */
+    /**
+     * The SDK gamepad, for rumble, LEDs, and anything this class does not cover. The SDK copies
+     * each packet into it on another thread, so values read from it can mix two packets.
+     */
     val raw: Gamepad,
 ) {
     private val inputs = ArrayList<Pair<Button, (Gamepad) -> Boolean>>()
@@ -57,17 +61,27 @@ class Controller internal constructor(
         reported = BooleanArray(inputs.size) { inputs[it].first.isDown }
     }
 
-    /** Right is positive. */
-    val leftStickX: Double get() = raw.left_stick_x.toDouble()
-    /** Down is positive, as in the SDK. */
-    val leftStickY: Double get() = raw.left_stick_y.toDouble()
-    val rightStickX: Double get() = raw.right_stick_x.toDouble()
-    val rightStickY: Double get() = raw.right_stick_y.toDouble()
-    val leftTrigger: Double get() = raw.left_trigger.toDouble()
-    val rightTrigger: Double get() = raw.right_trigger.toDouble()
+    // The newest packet from the callback thread, and the one this update reads.
+    @Volatile private var latest: Gamepad = Gamepad().also { it.copy(raw) }
+    private var current: Gamepad = latest
 
-    /** Called on the SDK's event loop thread with new gamepad data. */
+    /** Right is positive. */
+    val leftStickX: Double get() = current.left_stick_x.toDouble()
+    /** Down is positive, as in the SDK. */
+    val leftStickY: Double get() = current.left_stick_y.toDouble()
+    val rightStickX: Double get() = current.right_stick_x.toDouble()
+    val rightStickY: Double get() = current.right_stick_y.toDouble()
+    val leftTrigger: Double get() = current.left_trigger.toDouble()
+    val rightTrigger: Double get() = current.right_trigger.toDouble()
+
+    /** Called on the OpMode thread before each update: sticks and triggers read the newest packet. */
+    internal fun sample() {
+        current = latest
+    }
+
+    /** Called on the SDK's event loop thread with each new packet, which the SDK does not change afterward. */
     internal fun report(data: Gamepad) {
+        latest = data
         for (index in inputs.indices) {
             val (button, read) = inputs[index]
             val down = read(data)
