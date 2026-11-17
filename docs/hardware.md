@@ -35,6 +35,27 @@ A mistyped device is a compile error.
 
 Programs built with the generated `teleop`, `autonomous`, and `utility` check the configuration at every INIT: if the active configuration lacks a declared device, INIT fails with one message listing every missing device.
 
+## Write caching
+
+Each write to a motor or servo is a command on the hub's serial bus, so a loop that writes nearly the same value every update spends bus time for no change.
+A motor, servo, or CR servo can opt in with a cache tolerance:
+
+```kotlin
+val lift by expansion.motor(0, GoBilda5202Series, cacheTolerance = 0.01)
+val claw by control.servo(0, cacheTolerance = 0.005)
+```
+
+`hardware(RobotMap.lift)` then returns a wrapper of the SDK device that skips a power, or a servo position, within the tolerance of the last value it sent.
+The comparison is with the last value sent, not the last one asked for, so a slow ramp still moves the mechanism once it has moved more than the tolerance.
+It always sends exact 0 and a change of sign, so a mechanism always stops and reverses.
+Changing the direction, run mode, velocity, motor enable, servo range, or PWM settings through the wrapper makes the next write go through.
+The wrapper lasts for the session, and servo wrappers keep the SDK's `PwmControl`.
+
+The default tolerance is 0: Gum returns the SDK device itself, which already skips a write equal to the last one.
+Only writes through `hardware(...)` are cached; a library that finds the device by name in `hardware.map`, such as Pedro, writes to the SDK device directly.
+Motor velocity and target position are not cached.
+A tolerance below 0 or not a number fails the build.
+
 ## Build
 
 Apply `com.anshulnoori.gum.hardware` to the FTC app module after `com.android.application`. For each variant it:

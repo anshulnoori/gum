@@ -10,7 +10,7 @@ class RobotConfigTest {
         private val expansion = expansionHub(address = 3)
         private val control = controlHub()
         val frontLeft by control.motor(2, GoBilda5202Series)
-        val claw by control.servo(5)
+        val claw by control.servo(5, cacheTolerance = 0.01)
         val imu by control.i2c(0, ControlHubImuBhi260ap)
         val pinpoint by control.i2c(1, GoBildaPinpoint)
         val color by control.i2c(1, RevColorSensorV3)
@@ -49,6 +49,8 @@ class RobotConfigTest {
         assertEquals("frontLeft", Bot.frontLeft.name)
         assertSame(Role.Pinpoint::class.java, Bot.pinpoint.role)
         assertSame(Role.CrServo::class.java, Bot.spinner.role)
+        assertEquals(0.01, Bot.claw.cacheTolerance)
+        assertEquals(0.0, Bot.lift.cacheTolerance, "write caching is opt-in")
         assertEquals(listOf("frontLeft", "claw", "imu", "pinpoint", "color", "lift", "spinner", "limit"), Bot.devices.map { it.name })
     }
 
@@ -65,12 +67,14 @@ class RobotConfigTest {
     }
 
     @Test
-    fun `rejects ports the hub does not have`() {
+    fun `rejects ports the hub does not have and invalid cache tolerances`() {
         for ((declare, message) in listOf<Pair<(Hub) -> Any, String>>(
             { hub: Hub -> hub.motor(4) } to "Control Hub has motor ports 0 to 3, not 4",
             { hub: Hub -> hub.servo(-1) } to "Control Hub has servo ports 0 to 5, not -1",
             { hub: Hub -> hub.analog(4) } to "Control Hub has analog ports 0 to 3, not 4",
             { hub: Hub -> hub.i2c(4, SparkFunOtos) } to "Control Hub has I2C buses 0 to 3, not 4",
+            { hub: Hub -> hub.motor(1, cacheTolerance = -0.01) } to "Control Hub motor port 1 has cache tolerance -0.01; it must be 0 or more",
+            { hub: Hub -> hub.crServo(2, cacheTolerance = Double.NaN) } to "Control Hub servo port 2 has cache tolerance NaN; it must be 0 or more",
         )) {
             val error = assertFailsWith<IllegalArgumentException> {
                 object : RobotConfig("bot") { init { declare(controlHub()) } }

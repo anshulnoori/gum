@@ -92,14 +92,20 @@ class Hub internal constructor(
     private val used = mutableSetOf<Pair<PortKind, Int>>()
     private val i2cCount = IntArray(I2C_BUSES)
 
-    fun motor(port: Int, type: MotorType = UnspecifiedMotor): DeviceSlot<Role.Motor> =
-        slot(PortKind.MOTOR, port, type.xmlTag, Role.Motor::class.java)
+    /**
+     * A motor. With a [cacheTolerance] above 0, a power within it of the last power sent is skipped;
+     * see [Device.cacheTolerance].
+     */
+    fun motor(port: Int, type: MotorType = UnspecifiedMotor, cacheTolerance: Double = 0.0): DeviceSlot<Role.Motor> =
+        slot(PortKind.MOTOR, port, type.xmlTag, Role.Motor::class.java, cacheTolerance)
 
-    fun servo(port: Int): DeviceSlot<Role.Servo> =
-        slot(PortKind.SERVO, port, "Servo", Role.Servo::class.java)
+    /** A servo. With a [cacheTolerance] above 0, a position within it of the last position sent is skipped. */
+    fun servo(port: Int, cacheTolerance: Double = 0.0): DeviceSlot<Role.Servo> =
+        slot(PortKind.SERVO, port, "Servo", Role.Servo::class.java, cacheTolerance)
 
-    fun crServo(port: Int): DeviceSlot<Role.CrServo> =
-        slot(PortKind.SERVO, port, "ContinuousRotationServo", Role.CrServo::class.java)
+    /** A continuous-rotation servo. With a [cacheTolerance] above 0, a power within it of the last power sent is skipped. */
+    fun crServo(port: Int, cacheTolerance: Double = 0.0): DeviceSlot<Role.CrServo> =
+        slot(PortKind.SERVO, port, "ContinuousRotationServo", Role.CrServo::class.java, cacheTolerance)
 
     fun digital(port: Int): DeviceSlot<Role.Digital> =
         slot(PortKind.DIGITAL, port, "DigitalDevice", Role.Digital::class.java)
@@ -113,10 +119,13 @@ class Hub internal constructor(
         return DeviceSlot { deviceName -> Device(deviceName, this, i2cCount[bus]++, bus, type.xmlTag, type.role) }
     }
 
-    private fun <R> slot(kind: PortKind, port: Int, xmlTag: String, role: Class<R>): DeviceSlot<R> {
+    private fun <R> slot(kind: PortKind, port: Int, xmlTag: String, role: Class<R>, cacheTolerance: Double = 0.0): DeviceSlot<R> {
         require(port in 0 until kind.count) { "$name has ${kind.label} ports 0 to ${kind.count - 1}, not $port" }
+        require(cacheTolerance >= 0.0 && cacheTolerance.isFinite()) {
+            "$name ${kind.label} port $port has cache tolerance $cacheTolerance; it must be 0 or more"
+        }
         require(used.add(kind to port)) { "$name ${kind.label} port $port is declared twice" }
-        return DeviceSlot { deviceName -> Device(deviceName, this, port, null, xmlTag, role) }
+        return DeviceSlot { deviceName -> Device(deviceName, this, port, null, xmlTag, role, cacheTolerance) }
     }
 
     internal fun register(device: Device<*>) = config.register(device)
@@ -147,6 +156,12 @@ class Device<R> internal constructor(
     internal val bus: Int?,
     internal val xmlTag: String,
     val role: Class<R>,
+    /**
+     * Write caching for a motor or CR servo power, or a servo position: a write within this distance
+     * of the last value sent is skipped. Exact 0 and a change of sign are always sent, so a mechanism
+     * always stops and reverses. 0, the default, sends every write. Other devices have 0.
+     */
+    val cacheTolerance: Double = 0.0,
 ) {
     override fun toString() = name
 }
