@@ -4,7 +4,10 @@ import com.anshulnoori.gum.core.Subsystem
 import com.bylazar.field.PanelsField
 import com.pedropathing.follower.Follower
 import com.pedropathing.ivy.Command
+import com.pedropathing.ivy.Scheduler
+import com.pedropathing.ivy.behaviors.BlockedBehavior
 import com.pedropathing.ivy.behaviors.EndCondition
+import com.pedropathing.ivy.behaviors.InterruptedBehavior
 import com.pedropathing.math.Pose
 import com.pedropathing.paths.Path
 import kotlin.math.cos
@@ -115,21 +118,40 @@ open class PedroDrive(val follower: Follower) : Subsystem<PedroDrive.State>(Stat
     }
 
     /**
-     * Drives from [forward], [lateral], and [turn], read every update, until cancelled or
-     * interrupted, and then stops the drivetrain:
-     * `drive({ -gamepad1.leftStickY }, { -gamepad1.leftStickX }, { -gamepad1.rightStickX })`.
+     * Drives from [forward], [lateral], and [turn], read every update, as the drive's default
+     * command: `drive({ -gamepad1.leftStickY }, { -gamepad1.leftStickX }, { -gamepad1.rightStickX })`.
+     *
+     * It runs at the lowest priority and Ivy suspends it, rather than ending it, when another drive
+     * command takes over; it resumes once that command ends. Scheduled while another drive command
+     * runs, it starts when that one ends. When it is cancelled, it stops the drivetrain.
      */
     fun drive(forward: () -> Double, lateral: () -> Double, turn: () -> Double): Command {
         var ended = false
+        var suspended = false
+        lateinit var command: Command
+        // False once it ends, and while it waits in Ivy's suspended list: Ivy 1.1.1 can run a command
+        // it just suspended once more in the same update, and cancelling it there must not stop the
+        // command that took over.
+        val owns = { !ended && !(suspended && command.isScheduled && !Scheduler.isRunning(command)) }
         val set = { follower.manual(forward(), lateral(), turn()) }
-        return Command.build()
+        command = Command.build()
             .requiring(this)
-            .setStart { ended = false; set() }
-            .setExecute { if (!ended) set() }
-            .setEnd {
-                if (it == EndCondition.SUSPENDED) return@setEnd
-                ended = true
-                follower.stop()
+            .setPriority(Int.MIN_VALUE)
+            .setInterruptedBehavior(InterruptedBehavior.SUSPEND)
+            .setBlockedBehavior(BlockedBehavior.QUEUE)
+            .setStart { ended = false; suspended = false; set() }
+            .setExecute {
+                if (owns()) {
+                    suspended = false
+                    set()
+                }
             }
+            .setEnd {
+                val stop = owns()
+                ended = it != EndCondition.SUSPENDED
+                suspended = it == EndCondition.SUSPENDED
+                if (stop) follower.stop()
+            }
+        return command
     }
 }

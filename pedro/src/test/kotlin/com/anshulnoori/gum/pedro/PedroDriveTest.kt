@@ -1,5 +1,6 @@
 package com.anshulnoori.gum.pedro
 
+import com.anshulnoori.gum.core.routine
 import com.anshulnoori.gum.core.teleop
 import com.bylazar.field.Canvas
 import com.bylazar.field.Circle
@@ -8,6 +9,7 @@ import com.pedropathing.algorithm.Algorithm
 import com.pedropathing.drivetrain.DrivePowers
 import com.pedropathing.drivetrain.Drivetrain
 import com.pedropathing.follower.Follower
+import com.pedropathing.ivy.Command
 import com.pedropathing.localization.Localizer
 import com.pedropathing.localization.MotionState
 import com.pedropathing.math.Pose
@@ -19,9 +21,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class PedroDriveTest {
     private val calls = mutableListOf<String>()
+    private var atEnd = false
 
     private inline fun <reified T> fake(crossinline answer: (String, Array<Any?>) -> Any?): T =
         Proxy.newProxyInstance(T::class.java.classLoader, arrayOf(T::class.java)) { proxy, method, args ->
@@ -52,7 +56,7 @@ class PedroDriveTest {
         when (name) {
             "calculateHold" -> { (args[1] as Pose).let { calls += "hold at ${it.x()},${it.y()}" }; DrivePowers.zero() }
             "isBusy" -> true
-            "atParametricEnd" -> false
+            "atParametricEnd" -> atEnd
             else -> null
         }
     }
@@ -113,6 +117,57 @@ class PedroDriveTest {
         session.tick()
         assertEquals(PedroDrive.State.HOLDING, drive.state)
         assertEquals(listOf("localize", "hold at 12.0,34.0", "drive manual=false"), calls, "holds the pose the robot was at, not the path")
+        session.stop()
+        PanelsField.field.canvas = Canvas()
+    }
+
+    @Test
+    fun `the stick drive gives way to a path and resumes after it, and only a cancel while it runs stops the drivetrain`() {
+        val path = AtomicPath(Line(Pose(0.0, 0.0, 0.0), Pose(24.0, 0.0, 0.0)), Interpolator.constant(0.0), emptyList())
+        var go = false
+        lateinit var drive: PedroDrive
+        lateinit var sticks: Command
+        lateinit var follow: Command
+        val session = teleop<Unit, PedroDrive>("Drive", dependencies = { PedroDrive(Follower(localizer, drivetrain, algorithm)) }) {
+            drive = it
+            follow = drive.follow(path)
+            sticks = drive.drive({ 1.0 }, { 0.0 }, { 0.0 })
+            // Earlier in Ivy's list than the drive, so the path interrupts it inside Ivy's update.
+            val auto = routine { waitUntil { go }; follow.schedule() }
+            onStart { auto.schedule(); sticks.schedule() }
+        }.initialize(Unit)
+        session.start()
+        session.tick()
+        assertEquals(PedroDrive.State.DRIVER, drive.state)
+
+        go = true
+        calls.clear()
+        session.tick()
+        assertEquals(PedroDrive.State.FOLLOWING, drive.state, "the suspended drive does not run again in that update")
+        assertTrue(sticks.isScheduled, "Ivy keeps the drive to resume")
+        assertFalse("drive manual=true" in calls)
+
+        atEnd = true
+        session.tick()
+        session.tick()
+        assertEquals(PedroDrive.State.DRIVER, drive.state, "the drive resumes once the path finishes")
+
+        atEnd = false
+        follow.schedule()
+        session.tick()
+        sticks.cancel()
+        session.tick()
+        assertEquals(PedroDrive.State.FOLLOWING, drive.state, "cancelling the suspended drive leaves the path running")
+
+        follow.cancel()
+        sticks.schedule()
+        session.tick()
+        assertEquals(PedroDrive.State.DRIVER, drive.state)
+        calls.clear()
+        sticks.cancel()
+        session.tick()
+        assertEquals(PedroDrive.State.IDLE, drive.state)
+        assertEquals("stop", calls.last())
         session.stop()
         PanelsField.field.canvas = Canvas()
     }
