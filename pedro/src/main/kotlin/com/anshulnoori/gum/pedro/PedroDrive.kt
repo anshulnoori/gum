@@ -24,7 +24,8 @@ import kotlin.math.sin
  * older one. STOP stops the drivetrain.
  *
  * After START, it draws the robot and the path it follows on the Panels field, in Pedro's
- * coordinates, only on updates when Panels sends the field.
+ * coordinates, on updates when the Panels field's `shouldUpdateCanvas` is true. The field is sent
+ * later in the same update, so a send that starts as the flag turns true goes without the robot.
  */
 open class PedroDrive(val follower: Follower) : Subsystem<PedroDrive.State>(State.IDLE) {
     enum class State { IDLE, FOLLOWING, HOLDING, DRIVER }

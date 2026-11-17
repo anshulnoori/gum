@@ -7,18 +7,19 @@ The `ftc` module hosts these programs in the FTC SDK; see [FTC host](#ftc-host).
 ## Define a program and acquire dependencies
 
 ```kotlin
-val main = teleop<Hub, Robot>("Main", group = "Competition", dependencies = {
-    val robot = Robot(environment)
-    onStop { robot.close() }
-    robot
-}) { robot ->
-    initLoop { robot.reportStatus() }
-    onStart { robot.enable() }
-    loop { robot.update() }
+val main = teleop<Hub, Bench>("Main", group = "Competition", dependencies = {
+    val bench = Bench(environment)
+    onStop { bench.close() }
+    bench
+}) { bench ->
+    initLoop { bench.reportStatus() }
+    onStart { bench.enable() }
+    loop { bench.update() }
 }
 ```
 
-The robot methods illustrate application-owned behavior, not a Gum robot interface.
+This is the `core` builder, which hosts and JVM tests use. FTC programs use the builders the Gum Gradle plugin generates, `teleop("Main") { robot -> }`, which supply the dependency factory; see [Robot graph](#robot-graph) and [FTC host](#ftc-host).
+`Hub` and `Bench` stand for application types; `Bench` and its methods are not Gum's `Robot` interface.
 The factory is ordinary Kotlin. It can call a generated DI factory.
 `environment` is the value the host passes to `initialize`, such as FTC hardware access.
 It is available during dependency creation and setup. Do not retain it beyond the session.
@@ -42,7 +43,7 @@ try {
 ```
 
 The host calls all methods on the thread that initialized the session.
-The eventual FTC host supplies actual INIT, START, update, and STOP signals.
+The [FTC host](#ftc-host) supplies actual INIT, START, update, and STOP signals from a `LinearOpMode`.
 This example does not register an FTC OpMode or implement a timed robot loop.
 
 ## Contracts
@@ -218,9 +219,11 @@ class Shooter(sensor: Rev2mDistanceSensor = hardware(RobotMap.ballSensor)) : Sub
 }
 ```
 
-- `background(periodMillis) { read }` reads on its own thread from INIT until STOP, so the loop never waits on slow inputs such as I2C sensors or vision. `value` is the latest result; `ageSeconds` says how old it is.
+- `background(periodMillis) { read }` reads on its own thread from when it is created until STOP, so the loop does not wait for each read of a slow input such as an I2C sensor. A subsystem's reader starts at INIT, because Gum creates every subsystem then. `value` is the latest result; `ageSeconds` says how old it is.
+- Vision processors and the Limelight already deliver results on their own threads; reading them through `background` would poll them twice.
 - The read must only read. A failed read stops the OpMode the next time the loop reads `value`.
-- STOP stops readers before subsystems reset. The SDK serializes access to each hub, so a background I2C read can delay a bulk read on the same hub while it runs.
+- The read runs on another thread, so it cannot use `hardware` or `robot.battery`, which belong to the OpMode thread. Get the device first, as the constructor default above does.
+- STOP stops readers before subsystems reset. The SDK sends to the hubs under one transmission lock, shared by both hubs on a portal, so a background I2C read can delay a bulk read on either hub while it runs.
 
 ## Robot graph
 
@@ -254,7 +257,7 @@ val main = teleop("Main") { robot ->
 - `follow(path)`, `hold(pose)`, `holdHere()`, and `drive(...)` reserve the drive, so a newer drive command interrupts an older one. `drive(...)` reads its suppliers every update.
 - A `drive(...)` that is cancelled or interrupted stops the drivetrain. A `follow(path)` that ends before its path does holds the pose the robot is at; one that finishes holds the path's end pose.
 - STOP stops the drivetrain. Pedro's device names should come from `RobotMap`, for example `RobotMap.frontLeft.name`.
-- After START, it draws the robot and the path it follows on the Panels field, in Pedro's coordinates. It draws only on updates when Panels sends the field.
+- After START, it draws the robot and the path it follows on the Panels field, in Pedro's coordinates. It draws on updates when the field's `shouldUpdateCanvas` is true, which it checks before Gum sends the field, so some sent frames lack the robot.
 
 ## Panels
 
@@ -288,4 +291,4 @@ The host owns bulk reads: it sets every hub to manual caching and clears the cac
 After each update, the host sends Driver Station telemetry, then the update's telemetry and field drawing to Panels.
 FTC SDK 12.0 `OpModeMeta` carries the description; whether the Driver Station shows it is unverified.
 
-Status: compiled into an APK with FTC SDK 12.0 and Sloth 0.3.2; a JVM check confirmed which fields the scanner selects. Not yet run on a Control Hub, so Sloth registration and reload are unverified.
+Status: compiled into an APK with FTC SDK 12.0 and Sloth 0.3.2. JVM tests run `GumOpMode` through every phase, by replaying the SDK's calls; no test covers `GumProgramScanner`. Not yet run on a Control Hub, so Sloth registration and reload are unverified.

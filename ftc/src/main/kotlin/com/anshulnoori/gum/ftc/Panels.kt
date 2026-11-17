@@ -9,6 +9,8 @@ import org.firstinspires.ftc.robotcore.external.Telemetry
 /**
  * The Panels field for the running program: `field.moveCursor(x, y); field.circle(9.0)`.
  * Gum sends it to Panels after every update, then clears it, so draw it again each update.
+ * Panels transmits only when `shouldUpdateCanvas` is true at that send. Drawing only when the flag
+ * is true can miss a transmission, because the flag can turn true between the check and the send.
  */
 val FtcScope.field: FieldManager get() = PanelsField.field
 

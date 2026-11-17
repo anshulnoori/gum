@@ -4,10 +4,13 @@ import java.util.concurrent.locks.LockSupport
 
 /**
  * Reads [read] over and over on its own thread, from now until STOP, waiting [periodMillis]
- * between reads. Use it for slow inputs, such as I2C sensors or vision, so the OpMode loop never
- * waits for them: `private val distance = background { sensor.getDistance(DistanceUnit.MM) }`.
+ * between reads. Use it for slow inputs, such as I2C sensors, so the OpMode loop does not wait for
+ * each read: `private val distance = background { sensor.getDistance(DistanceUnit.MM) }`. A read
+ * can still delay a bulk read, because the SDK sends to both hubs on a portal under one lock.
+ * Vision processors and the Limelight already deliver results on their own threads; do not poll them here.
  *
- * [read] must only read. Outputs belong to subsystems on the OpMode thread.
+ * [read] must only read. Outputs belong to subsystems on the OpMode thread. It runs on another
+ * thread, so it cannot use `hardware` or `robot.battery`; get the device first.
  * A failed read stops the OpMode the next time the loop reads [Latest.value].
  * Call it while an OpMode runs, on its thread, such as in a subsystem's constructor.
  */

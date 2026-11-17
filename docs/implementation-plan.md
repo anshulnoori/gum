@@ -81,7 +81,7 @@ Reject overlapping requirements in supported parallel compositions.
 
 Status: implemented with a chain-lasting Metro scope; device evidence missing. See [chaining programs](lifecycle.md#chaining-programs) and [ADR 0004](adr/0004-program-chains-and-ivy-ownership.md).
 Setup ends with the next program; the host initializes it after a started run stops. The user replaced success-only `onSuccess` handoff with this.
-Verify on a Control Hub that `initOpMode` from `stop()` leaves the next program in INIT with the Driver Station showing its name and kind.
+Verify on a Control Hub that `initOpMode`, called when the SDK's stop OpMode initializes, leaves the next program in INIT with the Driver Station showing its name and kind.
 
 ## 6. Integrate FTC registration and Sloth reload
 

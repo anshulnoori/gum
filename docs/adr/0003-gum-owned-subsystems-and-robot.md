@@ -1,6 +1,6 @@
 # Gum owns subsystem state machines and creates the Metro robot graph
 
-Status: accepted. Amends ADR 0001, ADR 0002, and the design's non-goals.
+Status: accepted. Amends ADR 0001, ADR 0002, and the design's non-goals. Amended by [ADR 0004](0004-program-chains-and-ivy-ownership.md), which nests `RobotGraph` in a chain graph, and [ADR 0005](0005-requested-and-automatic-transitions.md).
 
 Team code should read as mechanisms and commands, not framework wiring.
 After writing an intake against raw KStateMachine and Metro, the user chose to move the state machine behind Gum and to have Gum create the Metro graph.
@@ -21,6 +21,8 @@ interface RobotGraph : Robot {
 }
 ```
 
+[ADR 0004](0004-program-chains-and-ivy-ownership.md) changed this: `RobotGraph` is now `@GraphExtension(OpModeScope::class)`, extending a `@DependencyGraph(ChainScope::class)` graph that the Gum Gradle plugin generates, so chain values can outlive a run.
+
 Subsystems are `@Inject @SingleIn(OpModeScope::class)` classes with one constructor.
 They find their own devices through constructor defaults such as `hardware(RobotMap.intakeLeft)`; Metro uses a default when the graph has no binding for that parameter, and tests pass fakes instead.
 The Gum Gradle plugin generates `teleop`, `autonomous`, and `utility` in the package of the `RobotConfig` object, typed to the `RobotGraph` there, so programs read `teleop("Main") { robot -> }`. Each INIT creates a new graph.
@@ -33,7 +35,7 @@ A missing subsystem dependency still fails to compile.
 Metro needs Gradle to run on JDK 21 or newer, and TeamCode targets Java 11 because Metro's runtime inlines Java 11 bytecode.
 `hardware` and subsystem registration rely on the OpMode thread; using either elsewhere fails with a message.
 `Subsystem` is a required Gum DSL, which the design previously listed as a non-goal.
-Nested modes, timeouts, and operation outcomes extend `Subsystem` when a mechanism needs them.
+Nested states, timeouts, and operation outcomes extend `Subsystem` when a mechanism needs them.
 
 ## Alternatives
 

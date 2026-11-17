@@ -39,11 +39,11 @@ class FtcEnvironment internal constructor(
     private val sdkGamepad1: Gamepad,
     private val sdkGamepad2: Gamepad,
 ) {
-    // Created on first use, on the OpMode thread inside the session, so their buttons join it.
-    // The gamepad callback reads these from the SDK's event loop thread.
     /** The chain graph this run belongs to; null until the first run of a chain creates it. */
     internal var chain: Any? = null
 
+    // Created on first use, on the OpMode thread inside the session, so their buttons join it.
+    // The gamepad callback reads these from the SDK's event loop thread.
     @Volatile private var controller1: Controller? = null
     @Volatile private var controller2: Controller? = null
 

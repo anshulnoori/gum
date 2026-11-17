@@ -27,8 +27,8 @@ The first event date, robot hardware, and performance targets remain unknown.
 | Sloth | Development class reload and registration facilities |
 
 Metro is the DI library. Gum creates the robot graph at every INIT and builds subsystem state machines ([ADR 0003](adr/0003-gum-owned-subsystems-and-robot.md)). KSP is not a requirement.
-Kotlinx.coroutines is the optional coroutine library, not the control clock.
-No dependency versions are frozen until a consumer application compiles and the relevant contracts pass tests.
+Routines use the standard library's `kotlin.coroutines`, resumed by Ivy's update; kotlinx.coroutines is not a dependency, and coroutines are not the control clock.
+Versions are pinned now that apex-2026 compiles and the contracts pass tests; the [README](../README.md#build-and-test) lists them.
 
 ## Program model
 
@@ -44,16 +44,15 @@ Program kinds include TeleOp, autonomous, and utility.
 Names, groups, and descriptions belong to metadata.
 Descriptions need a Gum display surface unless the selected FTC SDK supports them.
 
-The following syntax illustrates intent. Names and signatures remain proposed.
+The implemented syntax follows. The `teleop` builder the Gum Gradle plugin generates supplies the dependency factory ([ADR 0003](adr/0003-gum-owned-subsystems-and-robot.md)); `lift.moveTo` and `claw.open` stand for a team's named commands.
 
 ```kotlin
 val main = teleop(
     name = "Main",
     group = "Competition",
     description = "Driver controls",
-    dependencies = ::createRobotGraph,
 ) { robot ->
-    controls.a.onPress {
+    gamepad1.a.onPress {
         robot.lift.moveTo(HIGH)
             .then(robot.claw.open())
             .schedule()
@@ -69,7 +68,7 @@ val main = teleop(
 | INIT updates | Permit explicit initialization behavior; normal driver command bindings remain gated |
 | START | Enable driver bindings and schedule startup routines |
 | Active updates | Advance control-affecting work on the robot-loop thread |
-| Shutdown | Reject new work, cancel routines, apply safe responses, close resources, release graph references |
+| Shutdown | Reject new work, run cleanup callbacks, stop background reads, return subsystems to their initial states, then drop scheduled commands without their `end` (routine `finally` blocks do not run), release graph references |
 | Next program INIT | After a started run stops, initialize the program setup ended with; await a separate START |
 
 Homing, vision warmup, and selection menus need explicit initialization behavior.
@@ -80,24 +79,23 @@ The exact cleanup order and error-reporting interface need implementation tests.
 
 ## Program chaining
 
-A program's setup can end with the program to run next, so programs chain: `autonomous(...) { ...; driver { robot.drive.pose } }`.
+A program's setup can end with the program to run next, so programs chain: `autonomous("Red Auto") { robot -> ...; driverTeleOp }`.
 The user chose this over an `onSuccess` hook, after MercurialFTC's `exec(): Program?`.
 
 When a run that started stops, by Driver Station STOP or the autonomous timer, the host puts the next program into INIT under its own name and kind and waits for a separate START.
 A run stopped during INIT chains nothing. Safe shutdown completes before the next graph exists.
-Data passes through closures the next program reads during its setup, such as a pose. They must not keep old subsystems working.
+Data that outlives a run, such as a pose, lives in `@SingleIn(ChainScope::class)` values ([ADR 0004](adr/0004-program-chains-and-ivy-ownership.md)). They must not hold hardware or keep old subsystems working.
 
-SDK support for initializing an OpMode from `stop()` requires a device test and a current rules review.
+The FTC host queues the next program when the SDK's stop OpMode initializes ([lifecycle](lifecycle.md#chain-scope)). This requires a device test and a current rules review.
 
 ## Dependency ownership
 
 Each OpMode invocation receives a fresh graph.
 Subsystems share one instance per graph. Commands are fresh values created when their factories run.
-Qualified providers resolve individual motors and sensors through HardwareMap during INIT.
+Subsystems look up their motors and sensors through constructor defaults such as `hardware(RobotMap.intakeLeft)` ([ADR 0003](adr/0003-gum-owned-subsystems-and-robot.md)). Gum creates every subsystem during INIT, so the lookups run then.
 Compile-time validation proves provider availability, not physical device presence.
 
-Gum receives explicitly registered periodic and disposable resources, potentially through DI multibindings.
-The registration interface is not selected yet.
+Programs register periodic work with `initLoop` and `loop`, cleanup with `onStop`, and slow reads with `background`; subsystems join the session when they are created and Gum updates them ([lifecycle](lifecycle.md)).
 DI scopes govern instance reuse. Gum, not the DI annotation, governs shutdown and resource disposal.
 Framework objects must not retain TeamCode instances across reload.
 
@@ -120,13 +118,13 @@ The representation and composition of these outcomes remain to be implemented.
 A group reserves the union of its child requirements for its entire lifetime.
 This includes resources used only by later sequential steps.
 Reservations prevent competing scheduled owners, not direct hardware writes.
-Hardware remains private to subsystem implementations.
+Hardware remains private to subsystem implementations. One exception: `PedroDrive.follower` is public, so code can command the follower without reserving the drive.
 
-Parallel children with overlapping requirements must be rejected by the supported Gum composition interface.
+Parallel children with overlapping requirements must be rejected. Gum has no composition interface of its own besides `routine`; teams compose with Ivy's groups, and the rejection is not implemented yet.
 Sequential children can share requirements.
 Raw Ivy interoperability needs a documented validation policy; Gum cannot silently promise checks on code that bypasses it.
 
-Conflict defaults are unresolved: reject, queue, or interrupt.
+Conflicts follow Ivy's priorities and `ConflictBehavior` ([ADR 0004](adr/0004-program-chains-and-ivy-ownership.md)). Gum's commands use Ivy's defaults, priority 0 and `OVERRIDE`, so a newer command on the same subsystem interrupts the one that owns it.
 Normal interruption, fault, and STOP can require different subsystem responses.
 Holding current position, completing a previous target, and recovery movement are mechanism-specific decisions.
 
@@ -139,11 +137,11 @@ Bindings construct fresh commands and share scheduler confinement.
 
 One owner controls manual bulk-cache invalidation and sensor sampling.
 Bulk data does not include all I2C sensors or imply simultaneous multi-hub measurements.
-The exact order of event delivery, Ivy execution, state transitions, control calculations, and outputs remains open.
+Each active update applies button changes and runs their actions, runs `Scheduler.execute()`, then updates each subsystem (at most one automatic transition, then `during`), then runs the program's `loop` callbacks ([lifecycle](lifecycle.md#ivy-commands)). Outputs are written by commands, `onEntry`, and `during`.
 That order must avoid stale completion observations and conflicting output owners.
 
 Optional background work returns timestamped data. It does not write motors independently.
-Optional coroutine work belongs to the session and cancels on shutdown.
+Routines belong to the session. Shutdown drops them without running their `finally` blocks, because Ivy's reset calls no `end`.
 KStateMachine integration must follow its threading and event-processing contracts.
 Neither parallel state regions nor Ivy parallel groups require simultaneous execution on different threads.
 
@@ -176,12 +174,15 @@ Research is not permission to run development services during matches.
 ## Decisions still required
 
 - First event date, robot hardware, team workflow, and measurable reliability targets
-- Compatible FTC/Kotlin/Gradle/Metro/Sloth/Ivy/KStateMachine versions
-- Public lifecycle test interfaces and the dependency/cleanup contract
-- Reentrant schedule/cancel policy for commands scheduled inside Ivy's update
+- Reentrant schedule/cancel policy for commands scheduled inside Ivy's update. The [implementation plan](implementation-plan.md) records Ivy 1.1.1's behavior. Gum's own commands report done only until they end, so Ivy does not end them twice; a policy for raw Ivy commands remains.
 - Command outcome propagation (conflicts use Ivy's priority and `ConflictBehavior`)
 - State-machine topology for coordinated mechanisms
-- Motion/localization integration and its single update owner
-- Registration metadata and transition payload interface
+
+Settled since this list was written:
+
+- Compatible FTC/Kotlin/Gradle/Metro/Sloth/Ivy/KStateMachine versions: pinned; see the [README](../README.md#build-and-test).
+- Public lifecycle test interfaces and the dependency/cleanup contract: see [lifecycle contracts](lifecycle.md#contracts).
+- Motion/localization integration and its single update owner: `PedroDrive` owns the Pedro follower, and Gum updates it once per update ([lifecycle](lifecycle.md#pedro-pathing)).
+- Registration metadata and transition payload interface: `ProgramMetadata` registers through Sloth ([FTC host](lifecycle.md#ftc-host)), and a request's effect sets the data a state uses ([subsystems](lifecycle.md#subsystems)).
 
 The implementation plan resolves these through small executable examples rather than additional speculative framework layers.
