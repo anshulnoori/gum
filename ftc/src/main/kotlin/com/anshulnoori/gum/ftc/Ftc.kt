@@ -187,10 +187,11 @@ object GumProgramScanner : OpModeScanner() {
     }
 
     // A Kotlin `val` compiles to a private field; its getter carries the declared visibility.
+    // Method.getParameterCount needs Android 8 (API 26); the Control Hub runs Android 7.1.
     private fun isPublic(cls: Class<*>, field: Field): Boolean {
         if (Modifier.isPublic(field.modifiers)) return true
         val getter = "get" + field.name.replaceFirstChar { it.uppercaseChar() }
-        return cls.declaredMethods.any { it.name == getter && it.parameterCount == 0 && Modifier.isPublic(it.modifiers) }
+        return cls.declaredMethods.any { it.name == getter && it.parameterTypes.isEmpty() && Modifier.isPublic(it.modifiers) }
     }
 }
 
