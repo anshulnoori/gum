@@ -1,7 +1,7 @@
 # Hardware configuration from code
 
 A robot's wiring is declared once, in Kotlin, in the FTC app module.
-The build generates the FTC robot configuration from it, the Robot Controller activates that configuration at app start, and code resolves devices through the same declarations.
+The build generates the FTC robot configuration from it, the Robot Controller activates that configuration at app start when its wiring is new, and code resolves devices through the same declarations.
 
 ## Declare the wiring
 
@@ -78,10 +78,13 @@ USB devices follow the `LynxUsbDevice`, directly under `<Robot>`: a `Webcam` wit
 
 The SDK lists every `res/xml` resource whose root is `<Robot type="FirstInspires-FTC">` as a read-only configuration.
 The Robot Controller activity calls `@OnCreate` hooks at the end of `onCreate`, before its service connects and it builds the hardware map from the active configuration.
-The generated hook makes the generated configuration active then, so each app start uses it without a robot restart.
-The SDK saves the active configuration as its name and resource ID, and loads the resource by ID. A rebuild can renumber resources, so the hook also reactivates when the saved name matches but the saved ID does not.
+The generated hook runs then and decides whether to make the generated configuration active:
 
-Choosing another configuration on the Driver Station lasts until the app restarts.
+1. New wiring: the build stores a SHA-256 hash of the generated XML in the hook, and the Robot Controller keeps the hash of the last wiring it started with. When the hash differs, as on the first install or after the Kotlin wiring changes, the hook activates the generated configuration and logs the one it replaced.
+2. Unchanged wiring: the hook keeps whatever the Driver Station chose and logs that it kept it. A configuration chosen in Configure Robot stays active through app restarts and reinstalls of the same wiring.
+3. Renumbered resource: the SDK saves the active configuration as its name and resource ID, and loads the resource by ID. A rebuild can renumber resources, so when the generated configuration is active under an old ID, the hook activates it again with the new one.
+
+When another configuration is active and lacks a declared device, INIT fails and names the configuration to select.
 A read-only configuration cannot be edited on the robot; change the Kotlin and reinstall.
 
-Status: generation, packaging, and the hook's presence in the APK are verified. The Limelight and webcam serial numbers parse to the SDK's serial number types on the JVM, and `Limelight3A` accepts them. On a Control Hub (Android 7.1.2), the hook ran at install and replaced the configuration the team had selected; a Limelight or webcam from this configuration has not yet run on one.
+Status: generation, packaging, and the hook's presence in the APK are verified. The Limelight and webcam serial numbers parse to the SDK's serial number types on the JVM, and `Limelight3A` accepts them. On a Control Hub (Android 7.1.2), an earlier hook that activated at every app start replaced the configuration the team had selected at install. Keeping a Driver Station choice across restarts, and a Limelight or webcam from this configuration, have not yet run on a Control Hub.

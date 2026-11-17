@@ -150,23 +150,36 @@ private class CachedCrServo(private val servo: CRServo, private val cache: Write
 
 /** Called by the generated `@OnCreate` hook. Not part of the TeamCode interface. */
 object RobotConfigActivation {
+    private const val PREFERENCES = "gum"
+    private const val INSTALLED_WIRING = "installedWiring"
+
     /**
-     * Makes the generated configuration active. The Robot Controller calls `@OnCreate` hooks at the
-     * end of its activity's `onCreate`, before its service connects and it builds the hardware map.
+     * Makes the generated configuration active when its wiring is new to this Robot Controller, and
+     * otherwise keeps the configuration chosen on the Driver Station. [wiring] is a hash of the
+     * generated XML. The Robot Controller calls `@OnCreate` hooks at the end of its activity's
+     * `onCreate`, before its service connects and it builds the hardware map.
      */
     @JvmStatic
-    fun activate(context: Context, name: String, resourceId: Int) {
+    fun activate(context: Context, name: String, resourceId: Int, wiring: String) {
         val manager = RobotConfigFileManager(context as Activity)
+        val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
         val active = manager.activeConfig
-        if (isActive(active, name, resourceId)) return
-        manager.setActiveConfig(false, RobotConfigFile(name, resourceId))
-        RobotLog.ii("Gum", "Activated robot configuration %s (was %s)", name, active.name)
+        val wiringChanged = preferences.getString(INSTALLED_WIRING, null) != wiring
+        if (shouldActivate(active, name, resourceId, wiringChanged)) {
+            manager.setActiveConfig(false, RobotConfigFile(name, resourceId))
+            RobotLog.ii("Gum", "Activated robot configuration %s (was %s)", name, active.name)
+        } else if (active.name != name) {
+            RobotLog.ii("Gum", "Kept robot configuration %s, chosen on the Driver Station; %s is unchanged", active.name, name)
+        }
+        preferences.edit().putString(INSTALLED_WIRING, wiring).apply()
     }
 
     /**
-     * The SDK saves the active configuration's resource ID and loads that resource, and a rebuild
-     * can renumber resources, so a saved entry with the right name can still point at another file.
+     * When the generated configuration is active, it is activated again only to update its resource
+     * ID: the SDK saves the ID and loads the resource by it, and a rebuild can renumber resources.
+     * Otherwise it replaces the active configuration only when [wiringChanged].
      */
-    internal fun isActive(active: RobotConfigFile, name: String, resourceId: Int) =
-        active.location == RobotConfigFile.FileLocation.RESOURCE && active.name == name && active.resourceId == resourceId
+    internal fun shouldActivate(active: RobotConfigFile, name: String, resourceId: Int, wiringChanged: Boolean) =
+        if (active.location == RobotConfigFile.FileLocation.RESOURCE && active.name == name) active.resourceId != resourceId
+        else wiringChanged
 }
