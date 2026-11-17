@@ -135,7 +135,7 @@ class Intake(
 - Named commands are a subsystem's whole API. `request`, `hold`, and `reach` are protected, so programs call `intake.collect()`, not `intake.request(...)`.
 - `request(state)` is an Ivy command that reserves the subsystem, transitions to `state`, and finishes at once. Any state can be requested from any other.
 - `request(state, from = ...)` is valid only from the named state, or from a set of states. From any other state the request is refused: the state stays, and Gum reports it. Requesting the current state is never refused.
-- A refused request is never silent. Gum passes a message naming the subsystem, the requested state, and the current state to `onRefused` callbacks; FTC programs log it to RobotLog and add it to the Driver Station's telemetry log. Without a callback, Gum prints it to standard error. Once command outcomes exist, a refused request will also end with a refused outcome.
+- A refused request is never silent. Gum passes a message naming the subsystem, the requested state, and the current state to `onRefused` callbacks; FTC programs log it to RobotLog and add it to the Driver Station's telemetry log. Without a callback, Gum prints it to standard error. The request also ends with the refused outcome, which a routine's `await` returns.
 - `onEntry` runs on every entry, including the initial state, which each subsystem enters at INIT, after setup. A subsystem created later enters it on its first update.
 - STOP returns each subsystem to its initial state, whatever its commands allow.
 
@@ -168,7 +168,7 @@ class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Sub
 - `effect { }` runs when its transition is taken, before the target's `onEntry`. On `request(state) { }` the block is the effect: it runs only when the transition is taken. Requesting the current state runs the effect without re-entering, so a new target takes effect.
 - `during(state)` runs on every update after START, after commands and automatic transitions.
 - `reach(state)` reserves the subsystem and finishes once it is in `state`.
-- Other outcomes (timed out, faulted) are not reported yet. A `reach` that never arrives looks like any other command to Ivy.
+- A `reach` that never arrives waits forever; `reach(state).withTimeout(seconds)` gives it a limit. See [outcomes and timeouts](#outcomes-and-timeouts). Faults are not reported yet.
 
 ## Controller events
 
@@ -223,6 +223,25 @@ val score = routine(robot.intake, robot.flywheel) {
 - `await(command)` runs a command inside the routine; one that finishes at once costs no update. `waitUntil`, `waitSeconds`, and `nextUpdate` wait.
 - Like Ivy's groups, a routine owns everything it runs: it reserves the subsystems it lists, and `await` fails for a command that needs anything else.
 - When Ivy interrupts or cancels a routine, its awaited command ends as interrupted and the routine's `finally` blocks run. An exception from the body stops the OpMode.
+
+### Outcomes and timeouts
+
+```kotlin
+val score = routine(robot.intake, robot.flywheel) {
+    if (await(robot.flywheel.spinTo(3000.0).withTimeout(2.0)) == Outcome.TIMED_OUT) return@routine
+    await(robot.intake.collect())
+}
+```
+
+- `await(command)` returns the command's `Outcome`: how it ended.
+  - `FINISHED`: it did its work. A request entered its state, a `reach` arrived, a routine's body returned. Any non-Gum command that finishes reports `FINISHED`.
+  - `REFUSED`: its subsystem refused the request, so the state stayed. Both `request` and `hold` report it.
+  - `INTERRUPTED`: it ended before doing its work. A `hold` never finishes by itself, so a hold whose state the subsystem left by an automatic transition reports it. A routine or `reach` that Ivy interrupts or cancels reports it too.
+  - `TIMED_OUT`: its `withTimeout` ran out first.
+- The routine continues whatever the outcome. Check it before a step that needs the last one to succeed.
+- `command.withTimeout(seconds)` works on any command, including a routine. Its time counts from when it starts, and Gum checks it once per update. When it runs out, Gum ends the command as interrupted, so the command runs its own interrupt handling: a routine's `finally` blocks run, and a `follow` holds where the robot is. The outcome is then `TIMED_OUT`. A command that finishes in time keeps its own outcome, such as `REFUSED`.
+- The timed command keeps the command's requirements, priority, and behaviors, so Ivy schedules it the same way. Scheduled with Ivy instead of awaited, it still ends at the timeout; nothing reads its outcome.
+- Ivy's own groups, such as `then`, `with`, and `raceWith`, do not pass outcomes on: `request(...).then(reach(...))` reports `FINISHED` even when its request is refused. Await each step in a routine to see its outcome.
 
 ## Background reads
 

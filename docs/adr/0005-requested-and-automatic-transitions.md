@@ -9,7 +9,7 @@ A subsystem is in one **state** at a time and changes state by a **transition**,
 Named commands are a subsystem's whole API. `request`, `hold`, and `reach` are protected; a subsystem exposes commands such as `collect()` and `collecting()`.
 There is no shared allow-list of transitions. A command that is valid only from certain states says so: `request(State.HIGH, from = State.MID)`. A request's block is the transition's **effect**, which runs before the target's `onEntry`.
 
-A refused request is never silent. Gum hooks KStateMachine's `IGNORED` result and passes a message to `ProgramScope.onRefused` callbacks; the FTC host logs it to RobotLog and the Driver Station's telemetry log. When command outcomes exist, a refused request will also end with a refused outcome.
+A refused request is never silent. Gum hooks KStateMachine's `IGNORED` result and passes a message to `ProgramScope.onRefused` callbacks; the FTC host logs it to RobotLog and the Driver Station's telemetry log. A refused request also ends with the refused outcome, which a routine's `await` returns.
 
 Transitions the subsystem takes by itself go in their own block: `automatic { A to B whenever { condition } effect { … } }`. Gum checks them once per update, after commands. Conditions must only read. The first declared match wins, and at most one is taken per update.
 

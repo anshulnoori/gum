@@ -3,7 +3,7 @@
 Gum v2 is a Kotlin-first framework for FIRST Tech Challenge robot programs.
 It connects functional OpModes, lifecycle-scoped dependency injection, controller events, and state-machine subsystems.
 
-**Status: implemented and JVM-tested: the lifecycle, the FTC host as a `LinearOpMode`, Ivy scheduling, KStateMachine subsystems with feedback control, gamepad events from the SDK callback with button combinators and stick and trigger thresholds, coroutine routines, background reads, program chains, hardware configuration from Kotlin with opt-in write caching, a Pedro Pathing drive, and Panels telemetry and field drawing. Implemented but not JVM-tested: the chain-lasting Metro scope and Sloth registration. apex-2026 compiles on it with FTC SDK 12.0. Nothing has run on a robot yet. Operation outcomes are not implemented, and no artifact is published.**
+**Status: implemented and JVM-tested: the lifecycle, the FTC host as a `LinearOpMode`, Ivy scheduling, KStateMachine subsystems with feedback control, gamepad events from the SDK callback with button combinators and stick and trigger thresholds, coroutine routines, background reads, program chains, hardware configuration from Kotlin with opt-in write caching, a Pedro Pathing drive, and Panels telemetry and field drawing. Implemented but not JVM-tested: the chain-lasting Metro scope and Sloth registration. apex-2026 compiles on it with FTC SDK 12.0. Nothing has run on a robot yet. Routines see command outcomes (finished, interrupted, refused, timed out) and can limit any command with a timeout; faults are not implemented, and no artifact is published.**
 
 This repository starts with independent Git history. The previous implementation remains in [old-gum](https://github.com/anshulnoori/old-gum).
 

@@ -133,4 +133,85 @@ class RoutineTest {
         assertEquals("jammed", error.message)
         assertEquals(SessionState.STOPPED, session.state)
     }
+
+    private class Gate : Subsystem<Roll>(Roll.OFF) {
+        var full = false
+        override val automatic = automatic { Roll.ON to Roll.OFF whenever { full } }
+        override fun onEntry(state: Roll) = Unit
+        fun on() = request(Roll.ON)
+        fun ejectOnce() = request(Roll.EJECT, from = Roll.OFF)
+        fun ejecting() = hold(Roll.EJECT, from = Roll.OFF)
+        fun onHeld() = hold(Roll.ON)
+        fun opened() = reach(Roll.ON)
+    }
+
+    @Test
+    fun `await returns how each command ended`() {
+        val outcomes = mutableListOf<Outcome>()
+        lateinit var gate: Gate
+        val session = teleop<Unit, Gate>("Auto", dependencies = { Gate() }) { g ->
+            gate = g
+            val steps = routine(gate) {
+                outcomes += await(gate.on())
+                outcomes += await(gate.ejectOnce().withTimeout(10.0))
+                outcomes += await(gate.ejecting())
+                outcomes += await(gate.onHeld())
+                outcomes += await(gate.opened().withTimeout(0.05))
+                outcomes += await(routine(gate) { nextUpdate() }.withTimeout(10.0))
+            }
+            onStart { steps.schedule() }
+        }.initialize(Unit)
+        session.start()
+        assertEquals(listOf(Outcome.FINISHED, Outcome.REFUSED, Outcome.REFUSED), outcomes)
+        assertEquals(Roll.ON, gate.state, "refused requests leave the state alone, and a timeout keeps the refusal")
+        session.tick()
+        gate.full = true
+        session.tick()
+        session.tick()
+        assertEquals(Outcome.INTERRUPTED, outcomes.last(), "the gate left ON by itself, cutting the hold short")
+        assertEquals(Roll.OFF, gate.state)
+        session.tick()
+        assertEquals(4, outcomes.size, "reach(ON) waits until its timeout")
+        Thread.sleep(80)
+        session.tick()
+        assertEquals(Outcome.TIMED_OUT, outcomes.last())
+        session.tick()
+        assertEquals(
+            listOf(Outcome.FINISHED, Outcome.REFUSED, Outcome.REFUSED, Outcome.INTERRUPTED, Outcome.TIMED_OUT, Outcome.FINISHED),
+            outcomes,
+            "a command that finishes in time keeps its own outcome",
+        )
+        session.stop()
+    }
+
+    @Test
+    fun `a timeout counts from when the command starts and ends it as interrupted`() {
+        val events = mutableListOf<String>()
+        lateinit var limited: Command
+        lateinit var outer: Command
+        val session = session {
+            val stuck = { name: String ->
+                routine {
+                    try {
+                        waitUntil { false }
+                    } finally {
+                        events += "$name finally"
+                    }
+                }
+            }
+            limited = stuck("scheduled").withTimeout(0.05)
+            outer = routine { events += "awaited ${await(stuck("awaited").withTimeout(0.05))}" }
+            Thread.sleep(80)
+            onStart { limited.schedule(); outer.schedule() }
+        }
+        session.tick()
+        assertTrue(limited.isScheduled, "the time before START does not count")
+        assertEquals(emptyList(), events)
+        Thread.sleep(80)
+        session.tick()
+        assertFalse(limited.isScheduled)
+        assertFalse(outer.isScheduled)
+        assertEquals(listOf("scheduled finally", "awaited finally", "awaited TIMED_OUT"), events)
+        session.stop()
+    }
 }

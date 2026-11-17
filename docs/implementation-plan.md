@@ -58,7 +58,7 @@ Gum's `Subsystem` builds a KStateMachine 0.38.1 machine from an enum of states a
 Named commands request a state and finish once it is entered. A request valid only `from` certain states is refused from any other, and Gum reports the refusal; automatic transitions run after Ivy each update.
 JVM tests drive real Ivy and KStateMachine, including the intake with fake motors.
 Feedback control is implemented: `during(state)` runs control after automatic transitions, `request(state) { }` sets data in the transition's effect, and `reach(state)` waits for a state; JVM tests drive a flywheel with a fake sensor.
-Faults, timeouts, nested states, and an outcome type that reports refusal remain.
+Outcomes and timeouts are implemented: a routine's `await` returns finished, interrupted, refused, or timed out, and `withTimeout` limits any command; see [outcomes and timeouts](lifecycle.md#outcomes-and-timeouts). Faults and nested states remain.
 
 Ivy 1.1.1 reentrancy, observed against the real dependency:
 a command interrupted by a command scheduled during `Scheduler.execute()` still runs `execute()` once more in that pass, after its `end(INTERRUPTED)`.

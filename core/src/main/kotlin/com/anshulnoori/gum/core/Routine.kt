@@ -33,15 +33,22 @@ import java.util.concurrent.CancellationException
  * When Ivy interrupts or cancels it, the command it is awaiting ends as interrupted, and the routine
  * resumes with a [CancellationException], so its `finally` blocks run. An exception from the body
  * propagates out of Ivy's update and stops the OpMode.
+ *
+ * Its outcome is [Outcome.FINISHED] when the body returns and [Outcome.INTERRUPTED] when Ivy ends it
+ * first. Give it a limit with [withTimeout].
  */
 fun routine(vararg requirements: Any, body: suspend Routine.() -> Unit): Command {
     val routine = Routine(requirements.toSet())
-    return Command.build()
+    val command = Reported()
+    return command
         .requiring(*requirements)
-        .setStart { routine.begin(body) }
+        .setStart { command.outcome = Outcome.FINISHED; routine.begin(body) }
         .setExecute { routine.step() }
         .setDone { routine.finished && !routine.interrupted }
-        .setEnd { routine.end(it) }
+        .setEnd {
+            routine.end(it)
+            if (routine.interrupted) command.outcome = Outcome.INTERRUPTED
+        }
 }
 
 @RestrictsSuspension
@@ -58,16 +65,23 @@ class Routine internal constructor(private val requirements: Set<Any>) {
     internal var interrupted = false
         private set
 
-    /** Runs [command] to completion inside this routine. It may need only the routine's requirements. */
-    suspend fun await(command: Command) {
+    /**
+     * Runs [command] to completion inside this routine and returns how it ended: [Outcome.FINISHED],
+     * [Outcome.REFUSED] for a refused request, [Outcome.TIMED_OUT] for a [withTimeout] that ran out,
+     * or [Outcome.INTERRUPTED], such as for a `hold` whose state the subsystem left. The routine
+     * continues whatever the outcome; check it before a step that needs the last one to succeed.
+     * [command] may need only the routine's requirements.
+     */
+    suspend fun await(command: Command): Outcome {
         val missing = command.requirements() - requirements
         check(missing.isEmpty()) { "Add $missing to routine(...) to await this command" }
         command.start()
         if (command.done()) {
             command.end(EndCondition.NATURALLY)
-            return
+            return command.outcome
         }
         suspendCoroutine { child = command; continuation = it }
+        return command.outcome
     }
 
     /** Waits until [condition] is true, checking once per update. Returns at once if it already is. */

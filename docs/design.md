@@ -111,7 +111,7 @@ An operation has a request-specific outcome.
 Success, rejection, interruption, timeout, and fault remain distinguishable.
 A state such as Holding is not sufficient proof that a particular movement succeeded.
 A failed step must not advance a success-dependent routine.
-The representation and composition of these outcomes remain to be implemented.
+Routines see outcomes: `await` returns finished, interrupted, refused, or timed out, and `withTimeout` limits any command. Faults, and outcomes through Ivy's own groups, remain to be implemented.
 
 ## Reservations and cancellation
 
@@ -175,7 +175,7 @@ Research is not permission to run development services during matches.
 
 - First event date, robot hardware, team workflow, and measurable reliability targets
 - Reentrant schedule/cancel policy for commands scheduled inside Ivy's update. The [implementation plan](implementation-plan.md) records Ivy 1.1.1's behavior. Gum's own commands report done only until they end, so Ivy does not end them twice; a policy for raw Ivy commands remains.
-- Command outcome propagation (conflicts use Ivy's priority and `ConflictBehavior`)
+- Fault outcomes, and outcome propagation through Ivy's own groups (conflicts use Ivy's priority and `ConflictBehavior`)
 - State-machine topology for coordinated mechanisms
 
 Settled since this list was written:

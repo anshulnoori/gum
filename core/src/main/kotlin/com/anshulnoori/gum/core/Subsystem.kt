@@ -56,8 +56,8 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
      * afterward. It reserves this subsystem.
      *
      * When [from] is given, the request is valid only from those states; from any other state it is
-     * refused: the state stays, and Gum logs the refusal. Requesting the current state is never
-     * refused; it runs [effect] only, without re-entering.
+     * refused: the state stays, Gum logs the refusal, and the command ends with [Outcome.REFUSED].
+     * Requesting the current state is never refused; it runs [effect] only, without re-entering.
      *
      * [effect] runs when the transition is taken, before [onEntry], to set data the state uses:
      * `request(State.SPINNING) { targetRpm = rpm }`.
@@ -74,9 +74,13 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
     // ended again, and Ivy then removes this subsystem from the command that took it over.
     private fun requestCommand(state: S, from: Set<S>?, effect: () -> Unit): Command {
         var ended = false
-        return Command.build()
+        val command = Reported()
+        return command
             .requiring(this)
-            .setStart { ended = false; take(state, from, effect) }
+            .setStart {
+                ended = false
+                command.outcome = if (take(state, from, effect)) Outcome.FINISHED else Outcome.REFUSED
+            }
             .setDone { !ended }
             .setEnd { ended = it != EndCondition.SUSPENDED }
     }
@@ -85,7 +89,8 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
      * A command that transitions to [state] like [request] and keeps running until it is cancelled
      * or interrupted, then returns the subsystem to its initial state if it is still in [state].
      * It also ends, leaving the state alone, when the subsystem leaves [state] by an automatic
-     * transition, or when its request is refused.
+     * transition, or when its request is refused. Its outcome is [Outcome.REFUSED] when refused,
+     * and [Outcome.INTERRUPTED] otherwise: a hold never finishes by itself.
      */
     protected fun hold(state: S, from: S? = null, effect: () -> Unit = {}): Command =
         holdCommand(state, from?.let(::setOf), effect)
@@ -96,24 +101,35 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
 
     private fun holdCommand(state: S, from: Set<S>?, effect: () -> Unit): Command {
         var ended = false
-        return Command.build()
+        var refused = false
+        val command = Reported()
+        return command
             .requiring(this)
-            .setStart { ended = false; take(state, from, effect) }
+            .setStart { ended = false; refused = !take(state, from, effect) }
             .setDone { !ended && this.state != state }
             .setEnd {
                 ended = it != EndCondition.SUSPENDED
+                // A hold never finishes: it ends refused, or cut short by Ivy or by an automatic transition.
+                command.outcome = if (refused && it == EndCondition.NATURALLY) Outcome.REFUSED else Outcome.INTERRUPTED
                 if (this.state == state && state != initial) machine.processEventBlocking(Reset)
             }
     }
 
-    /** A command that reserves this subsystem and finishes once it is in [state]. */
+    /**
+     * A command that reserves this subsystem and finishes once it is in [state]. It can wait
+     * forever; give it a limit with [withTimeout].
+     */
     protected fun reach(state: S): Command {
         var ended = false
-        return Command.build()
+        val command = Reported()
+        return command
             .requiring(this)
-            .setStart { ended = false }
+            .setStart { ended = false; command.outcome = Outcome.FINISHED }
             .setDone { !ended && this.state == state }
-            .setEnd { ended = it != EndCondition.SUSPENDED }
+            .setEnd {
+                ended = it != EndCondition.SUSPENDED
+                if (it == EndCondition.INTERRUPTED) command.outcome = Outcome.INTERRUPTED
+            }
     }
 
     /**
@@ -139,15 +155,18 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
 
     private val automaticTransitions: List<AutomaticTransition<S>> by lazy { automatic?.transitions.orEmpty() }
 
-    private fun take(state: S, from: Set<S>?, effect: () -> Unit) {
+    /** Requests [state]; false when the request is refused. */
+    private fun take(state: S, from: Set<S>?, effect: () -> Unit): Boolean {
         val source = this.state
         if (state == source) {
             effect()
-            return
+            return true
         }
         if (machine.processEventBlocking(Request(state, from, effect)) == ProcessingResult.IGNORED) {
             session.refuse("${javaClass.simpleName} refused $state: it is $source, and $state is requested only from ${from.orEmpty().joinToString()}")
+            return false
         }
+        return true
     }
 
     internal fun enterInitialState() {

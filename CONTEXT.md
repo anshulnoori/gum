@@ -43,6 +43,12 @@ A command that finishes once a subsystem is in a given state.
 **Refused request**:
 A request made from a state it is not valid from. The state stays, and Gum reports it.
 
+**Outcome**:
+How a command ended: finished, interrupted, refused, or timed out. A routine's `await` returns it.
+
+**Timeout**:
+A limit on how long a command runs. When it runs out, the command is ended as interrupted, and its outcome is timed out.
+
 **Routine**:
 A coordinated command or command group, such as scoring followed by parking.
 
