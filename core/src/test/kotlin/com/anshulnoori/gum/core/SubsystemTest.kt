@@ -231,6 +231,36 @@ class SubsystemTest {
     }
 
     @Test
+    fun `reads before commands run after START, before button actions and commands see them`() {
+        val events = mutableListOf<String>()
+        var down = false
+
+        class Sensor : Subsystem<State>(State.OFF) {
+            var reading = 0
+            override fun onEntry(state: State) {}
+            override fun beforeCommands() { reading++ }
+            override fun during(state: State) { events += "during sees $reading" }
+        }
+
+        lateinit var sensor: Sensor
+        val session = teleop<Unit, Sensor>("Test", dependencies = { Sensor() }) {
+            sensor = it
+            Button { down }.onPress {
+                events += "press sees ${sensor.reading}"
+                Command.build().setStart { events += "command sees ${sensor.reading}" }.setDone { true }.schedule()
+            }
+        }.initialize(Unit)
+        session.tick()
+        assertEquals(0, sensor.reading, "INIT updates do not read")
+
+        session.start()
+        down = true
+        session.tick()
+        assertEquals(listOf("press sees 1", "command sees 1", "during sees 1"), events)
+        session.stop()
+    }
+
+    @Test
     fun `an effect runs only when its transition is taken, and the current state only runs it`() {
         val (session, flywheel) = session { Flywheel() }
         flywheel.boost(-1.0).schedule()

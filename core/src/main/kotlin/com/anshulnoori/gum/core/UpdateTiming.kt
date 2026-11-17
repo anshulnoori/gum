@@ -11,7 +11,7 @@ enum class UpdatePhase(val label: String) {
     /** Ivy's `Scheduler.execute`: every running command, including routines. Only after START. */
     IVY("Ivy"),
 
-    /** Every subsystem's automatic transitions and `during`. Only after START. */
+    /** Every subsystem's `beforeCommands`, automatic transitions, and `during`. Only after START. */
     SUBSYSTEMS("Subsystems"),
 
     /** The program's own `initLoop`, `onStart`, or `loop` callbacks. */

@@ -20,8 +20,10 @@ import ru.nsk.kstatemachine.transition.onTriggered
  * A subclass lists its states as an enum and sets its outputs in [onEntry]. Its named commands,
  * built with [request], [hold], and [reach], are its whole API. A command that is valid only from
  * certain states says so with `from`. Transitions the subsystem takes by itself go in [automatic],
- * and feedback control goes in [during]. Gum builds the state machine; on every update after
- * commands run, it takes at most one automatic transition and then calls [during]. The subsystem
+ * and feedback control goes in [during]. Sensor reads that commands decide from go in
+ * [beforeCommands]. Gum builds the state machine; on every update after START it calls
+ * [beforeCommands] before button actions and commands, and after commands run, it takes at most
+ * one automatic transition and then calls [during]. The subsystem
  * enters [initial] at INIT, once setup has run, or on its first update if it is created later.
  * STOP returns the subsystem to [initial].
  *
@@ -43,6 +45,12 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
      * for control that depends on sensors, such as holding a flywheel speed. Does nothing unless overridden.
      */
     protected open fun during(state: S) {}
+
+    /**
+     * Runs on every update after START, before button actions and commands, for reads that commands
+     * decide from in the same update, such as a localizer's pose. Does nothing unless overridden.
+     */
+    protected open fun beforeCommands() {}
 
     /** The current state. */
     val state: S
@@ -172,6 +180,8 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
     internal fun enterInitialState() {
         machine
     }
+
+    internal fun updateBeforeCommands() = beforeCommands()
 
     internal fun update() {
         val state = state

@@ -38,9 +38,10 @@ class Program<E, D> internal constructor(
      * Every [Subsystem] created by then enters its initial state, still in INIT.
      * A failure runs registered cleanup before propagating the original error.
      *
-     * Every tick first samples each [Button]. An INIT tick then runs [ProgramScope.initLoop] callbacks.
-     * An active tick runs button actions, advances Ivy's global scheduler, updates every [Subsystem],
-     * and runs the program's own [ProgramScope.loop] callbacks. STOP runs the program's cleanup,
+     * An INIT tick samples each [Button] and then runs [ProgramScope.initLoop] callbacks.
+     * An active tick runs every [Subsystem]'s reads before commands, samples each [Button] and runs
+     * its actions, advances Ivy's global scheduler, updates every [Subsystem], and runs the program's
+     * own [ProgramScope.loop] callbacks. STOP runs the program's cleanup,
      * returns subsystems to their initial states, and finally clears the scheduler.
      *
      * With [timing], each tick ends the buttons, Ivy, and subsystems phases as it finishes them; the
@@ -57,6 +58,7 @@ class Program<E, D> internal constructor(
             // Runs before subsystems reset: readers stop first.
             scope.onStop { scope.stopBackground() }
             scope.initLoop { scope.updateButtons(dispatch = false); timing?.end(UpdatePhase.BUTTONS) }
+            scope.loop { scope.updateSubsystemsBeforeCommands(); timing?.end(UpdatePhase.SUBSYSTEMS) }
             scope.loop { scope.updateButtons(dispatch = true); timing?.end(UpdatePhase.BUTTONS) }
             scope.loop { Scheduler.execute(); timing?.end(UpdatePhase.IVY) }
             scope.loop { scope.updateSubsystems(); timing?.end(UpdatePhase.SUBSYSTEMS) }
@@ -238,6 +240,11 @@ class ProgramScope<out E> internal constructor(
     internal fun enterInitialStates() {
         var index = 0
         while (index < subsystems.size) subsystems[index++].enterInitialState()
+    }
+
+    internal fun updateSubsystemsBeforeCommands() {
+        var index = 0
+        while (index < subsystems.size) subsystems[index++].updateBeforeCommands()
     }
 
     // Subsystems created during an update join the list; index iteration picks them up.

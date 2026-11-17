@@ -167,6 +167,7 @@ class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Sub
 - Automatic transitions are not commands and take no requirement. Commands cannot request them.
 - `effect { }` runs when its transition is taken, before the target's `onEntry`. On `request(state) { }` the block is the effect: it runs only when the transition is taken. Requesting the current state runs the effect without re-entering, so a new target takes effect.
 - `during(state)` runs on every update after START, after commands and automatic transitions.
+- `beforeCommands()` runs on every update after START, before button actions and commands, for reads that commands decide from in the same update, such as a localizer's pose.
 - `reach(state)` reserves the subsystem and finishes once it is in `state`.
 - A `reach` that never arrives waits forever; `reach(state).withTimeout(seconds)` gives it a limit. See [outcomes and timeouts](#outcomes-and-timeouts). Faults are not reported yet.
 
@@ -330,7 +331,7 @@ Gum phases (ms) : Input 0.02, Buttons 0.01, Ivy 0.30, Subsystems 3.10, Program 0
 ```
 
 - The loop line is the time from the start of one update to the start of the next: its average and maximum over the last second, and updates per second.
-- The phases line is the average time per update in each phase, in the order they run: Input (clearing the bulk cache and taking the newest gamepad packet), Buttons, Ivy (`Scheduler.execute`, including routines), Subsystems (automatic transitions and `during`), Program (the program's `initLoop`, `onStart`, or `loop` callbacks), Telemetry (sending to the Driver Station), and Panels. Other is the time outside every phase, such as the SDK's own checks between updates and adding these two lines.
+- The phases line is the average time per update in each phase, in the order they run: Input (clearing the bulk cache and taking the newest gamepad packet), Buttons, Ivy (`Scheduler.execute`, including routines), Subsystems (`beforeCommands`, which runs before Buttons, then automatic transitions and `during`), Program (the program's `initLoop`, `onStart`, or `loop` callbacks), Telemetry (sending to the Driver Station), and Panels. Other is the time outside every phase, such as the SDK's own checks between updates and adding these two lines.
 - A hub's bulk read happens at the first hardware read after the cache clears, so its time counts in the phase that reads first, usually Subsystems.
 - Ivy and Subsystems run only after START, so they show 0.00 in INIT. The first second after START also includes the last INIT updates and the START update. Nothing shows until the first second has passed.
 - Gum reads the clock once per phase and adds to fixed counters, so timing allocates nothing per update. It formats the two lines once per second; each update adds the same two strings again.
