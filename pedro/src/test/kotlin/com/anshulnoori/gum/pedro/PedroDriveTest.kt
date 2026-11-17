@@ -1,5 +1,6 @@
 package com.anshulnoori.gum.pedro
 
+import com.anshulnoori.gum.core.Button
 import com.anshulnoori.gum.core.routine
 import com.anshulnoori.gum.core.teleop
 import com.bylazar.field.Canvas
@@ -62,20 +63,25 @@ class PedroDriveTest {
     }
 
     @Test
-    fun `drive and hold move the follower, Gum updates it each loop, and STOP stops the drivetrain`() {
+    fun `drive and hold move the follower, Gum updates it before commands each loop, and STOP stops the drivetrain`() {
         lateinit var drive: PedroDrive
+        var down = false
         val session = teleop<Unit, PedroDrive>("Drive", dependencies = { PedroDrive(Follower(localizer, drivetrain, algorithm)) }) {
             drive = it
+            Button { down }.onPress { drive.drive({ 1.0 }, { 0.0 }, { 0.0 }).schedule() }
         }.initialize(Unit)
         session.start()
         assertEquals(PedroDrive.State.IDLE, drive.state)
         calls.clear()
 
-        drive.drive({ 1.0 }, { 0.0 }, { 0.0 }).schedule()
+        down = true
         session.tick()
-        assertEquals(PedroDrive.State.DRIVER, drive.state)
-        assertEquals(listOf("localize", "drive manual=true"), calls, "one follower update per loop, after the command")
-        val robot = PanelsField.field.canvas.items.filterIsInstance<Circle>().single()
+        assertEquals(PedroDrive.State.DRIVER, drive.state, "the state follows the command in the same update")
+        assertEquals(listOf("localize", "stop"), calls, "the follower updates once, before the command runs")
+        calls.clear()
+        session.tick()
+        assertEquals(listOf("localize", "drive manual=true"), calls, "the command's powers reach the drivetrain on the next update")
+        val robot = PanelsField.field.canvas.items.filterIsInstance<Circle>().last()
         assertEquals(listOf(12.0, 34.0), listOf(robot.x, robot.y), "draws the robot at its pose on the Panels field")
 
         drive.hold(Pose(10.0, 0.0, 0.0)).schedule()
@@ -145,7 +151,9 @@ class PedroDriveTest {
         session.tick()
         assertEquals(PedroDrive.State.FOLLOWING, drive.state, "the suspended drive does not run again in that update")
         assertTrue(sticks.isScheduled, "Ivy keeps the drive to resume")
-        assertFalse("drive manual=true" in calls)
+        calls.clear()
+        session.tick()
+        assertFalse("drive manual=true" in calls, "the suspended drive sends no powers while the path runs")
 
         atEnd = true
         session.tick()

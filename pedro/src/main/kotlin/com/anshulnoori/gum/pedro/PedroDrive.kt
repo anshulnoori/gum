@@ -19,11 +19,12 @@ import kotlin.math.sin
  * ```
  * @Inject
  * @SingleIn(OpModeScope::class)
- * class Drive(follower: Follower = Constants.create(hardware.map)) : PedroDrive(follower)
+ * class Drive(follower: Follower = PedroConstants.ROBOT.follower(hardware.map)) : PedroDrive(follower)
  * ```
  *
- * Gum updates the follower on every update after START, after commands. [state] mirrors the
- * follower's own mode. Its commands reserve this subsystem, so a newer drive command interrupts an
+ * Gum updates the follower on every update after START, before button actions and commands, as
+ * Pedro's docs do: commands decide from this update's pose, and what they set reaches the
+ * drivetrain on the next update. [state] mirrors the follower's own mode. Its commands reserve this subsystem, so a newer drive command interrupts an
  * older one. STOP stops the drivetrain.
  *
  * After START, it draws the robot and the path it follows on the Panels field, in Pedro's
@@ -33,7 +34,7 @@ import kotlin.math.sin
 open class PedroDrive(val follower: Follower) : Subsystem<PedroDrive.State>(State.IDLE) {
     enum class State { IDLE, FOLLOWING, HOLDING, DRIVER }
 
-    // Commands change the follower; Gum transitions to match it on the next update.
+    // Commands change the follower; Gum transitions to match it after commands, in the same update.
     final override val automatic = automatic {
         anyState to State.IDLE whenever { follower.idle() }
         anyState to State.FOLLOWING whenever { follower.following() }
@@ -51,8 +52,11 @@ open class PedroDrive(val follower: Follower) : Subsystem<PedroDrive.State>(Stat
         }
     }
 
-    override fun during(state: State) {
+    override fun beforeCommands() {
         follower.update()
+    }
+
+    override fun during(state: State) {
         if (PanelsField.field.shouldUpdateCanvas) draw()
     }
 

@@ -282,17 +282,17 @@ The `pedro` module makes a Pedro Pathing 3 `Follower` a Gum subsystem, the drive
 ```kotlin
 @Inject
 @SingleIn(OpModeScope::class)
-class Drive(follower: Follower = Constants.create(hardware.map)) : PedroDrive(follower)
+class Drive(follower: Follower = PedroConstants.ROBOT.follower(hardware.map)) : PedroDrive(follower)
 
 val main = teleop("Main") { robot ->
     onStart { robot.drive.drive({ -gamepad1.leftStickY }, { -gamepad1.leftStickX }, { -gamepad1.rightStickX }).schedule() }
 }
 ```
 
-- Gum updates the follower every update after START, after commands. `state` mirrors the follower's mode through automatic transitions: `IDLE`, `FOLLOWING`, `HOLDING`, or `DRIVER`.
+- Gum updates the follower in `beforeCommands`, every update after START, before button actions and commands, as Pedro's docs do. Commands decide from that update's pose, and what they set reaches the drivetrain on the next update. `state` mirrors the follower's mode through automatic transitions: `IDLE`, `FOLLOWING`, `HOLDING`, or `DRIVER`.
 - `follow(path)`, `hold(pose)`, `holdHere()`, and `drive(...)` reserve the drive, so a newer drive command interrupts an older one. `drive(...)` reads its suppliers every update.
 - `drive(...)` is the drive's default command: it runs at the lowest priority, Ivy suspends it while another drive command runs and resumes it afterward, and if it is scheduled while one runs, it waits. Cancelling it stops the drivetrain. A `follow(path)` that ends before its path does holds the pose the robot is at; one that finishes holds the path's end pose.
-- STOP stops the drivetrain. Pedro's device names should come from `RobotMap`, for example `RobotMap.frontLeft.name`.
+- STOP stops the drivetrain. Pedro's device names should come from `RobotMap`, for example `RobotMap.frontLeft.name`. [Pedro setup and tuning](pedro.md) covers `PedroConstants`, `PedroRobot`, and tuning builds.
 - After START, it draws the robot and the path it follows on the Panels field, in Pedro's coordinates. It draws on updates when the field's `shouldUpdateCanvas` is true, which it checks before Gum sends the field, so some sent frames lack the robot.
 
 ## Panels
