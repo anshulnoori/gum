@@ -8,6 +8,7 @@ import com.anshulnoori.gum.hardware.Role
 import com.qualcomm.ftccommon.configuration.RobotConfigFile
 import com.qualcomm.ftccommon.configuration.RobotConfigFileManager
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver
+import com.qualcomm.hardware.limelightvision.Limelight3A
 import com.qualcomm.hardware.rev.Rev2mDistanceSensor
 import com.qualcomm.hardware.rev.RevColorSensorV3
 import com.qualcomm.hardware.sparkfun.SparkFunOTOS
@@ -24,6 +25,7 @@ import com.qualcomm.robotcore.hardware.PwmControl
 import com.qualcomm.robotcore.hardware.Servo
 import com.qualcomm.robotcore.hardware.VoltageSensor
 import com.qualcomm.robotcore.util.RobotLog
+import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit
 import kotlin.math.abs
 import kotlin.math.sign
@@ -46,6 +48,8 @@ class Hardware internal constructor(
     @JvmName("otos") operator fun invoke(device: Device<Role.Otos>): SparkFunOTOS = lookup(device)
     @JvmName("color") operator fun invoke(device: Device<Role.ColorSensorV3>): RevColorSensorV3 = lookup(device)
     @JvmName("distance") operator fun invoke(device: Device<Role.Distance2m>): Rev2mDistanceSensor = lookup(device)
+    @JvmName("limelight") operator fun invoke(device: Device<Role.Limelight>): Limelight3A = lookup(device)
+    @JvmName("webcam") operator fun invoke(device: Device<Role.Webcam>): WebcamName = lookup(device)
 
     /** The main battery, which every configuration has without declaring it. */
     val battery: VoltageSensor get() = map.voltageSensor.iterator().next()
@@ -82,6 +86,8 @@ private fun sdkType(role: Class<*>): Class<out HardwareDevice> = when (role) {
     Role.Otos::class.java -> SparkFunOTOS::class.java
     Role.ColorSensorV3::class.java -> RevColorSensorV3::class.java
     Role.Distance2m::class.java -> Rev2mDistanceSensor::class.java
+    Role.Limelight::class.java -> Limelight3A::class.java
+    Role.Webcam::class.java -> WebcamName::class.java
     else -> error("No SDK type for role ${role.simpleName}")
 }
 
@@ -152,8 +158,15 @@ object RobotConfigActivation {
     fun activate(context: Context, name: String, resourceId: Int) {
         val manager = RobotConfigFileManager(context as Activity)
         val active = manager.activeConfig
-        if (active.location == RobotConfigFile.FileLocation.RESOURCE && active.name == name) return
+        if (isActive(active, name, resourceId)) return
         manager.setActiveConfig(false, RobotConfigFile(name, resourceId))
         RobotLog.ii("Gum", "Activated robot configuration %s (was %s)", name, active.name)
     }
+
+    /**
+     * The SDK saves the active configuration's resource ID and loads that resource, and a rebuild
+     * can renumber resources, so a saved entry with the right name can still point at another file.
+     */
+    internal fun isActive(active: RobotConfigFile, name: String, resourceId: Int) =
+        active.location == RobotConfigFile.FileLocation.RESOURCE && active.name == name && active.resourceId == resourceId
 }

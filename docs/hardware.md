@@ -17,6 +17,8 @@ object RobotMap : RobotConfig("apex") {
     val imu by control.i2c(0, ControlHubImuBhi260ap)
     val pinpoint by control.i2c(1, GoBildaPinpoint)
     val liftLeft by expansion.motor(0, GoBilda5202Series)
+    val limelight by limelight()
+    val camera by webcam("A1B2C3D4")
 }
 ```
 
@@ -25,11 +27,16 @@ The configuration name must use lowercase letters, digits, and underscores, beca
 Declaring a port the hub lacks, a port twice, or a name twice fails the build with a message naming the problem.
 Expansion Hubs must connect to the Control Hub over RS485; hubs connected only over USB need serial numbers and are not supported.
 
+USB devices belong to the robot, not to a hub:
+
+1. `limelight(usbId = 0)` declares a Limelight 3A. Its address is 172.29.<usbId>.1, where `usbId` is the USB ID on the Limelight's settings page; leave it at 0 unless that was changed. Limelight supports one per Control Hub, so a second is a build error.
+2. `webcam(serialNumber)` declares a USB webcam. The SDK finds a webcam by its serial number, so copy it from the webcam's entry in Configure Robot on the Driver Station after a scan. Two webcams with one serial number are a build error.
+
 These sources are compiled for the build machine as well as the robot, so they can use Gum's `hardware` module and the Kotlin standard library, but not the FTC SDK.
 
 ## Use the devices
 
-`hardware` resolves a declared device to its SDK type: `hardware(RobotMap.frontLeft)` is a `DcMotorEx`, and `hardware(RobotMap.pinpoint)` is a `GoBildaPinpointDriver`.
+`hardware` resolves a declared device to its SDK type: `hardware(RobotMap.frontLeft)` is a `DcMotorEx`, `hardware(RobotMap.pinpoint)` is a `GoBildaPinpointDriver`, `hardware(RobotMap.limelight)` is a `Limelight3A`, and `hardware(RobotMap.camera)` is a `WebcamName`.
 It works on the OpMode thread while an OpMode runs. A subsystem resolves only the devices it owns, in its constructor defaults.
 A mistyped device is a compile error.
 
@@ -65,14 +72,16 @@ Apply `com.anshulnoori.gum.hardware` to the FTC app module after `com.android.ap
 3. Adds `src/hardware/kotlin` to the app's `main` sources.
 
 The generator writes the format the FTC SDK 12.0 writes: a `LynxUsbDevice` with serial number `(embedded)` and parent module address 173, one `LynxModule` per hub, and device tags from the SDK's device annotations.
+USB devices follow the `LynxUsbDevice`, directly under `<Robot>`: a `Webcam` with its serial number, and an `EthernetDevice` with the Limelight's `ipAddress`, which the SDK passes to `Limelight3A`. The SDK names a scanned Limelight after the hub's own address on that link; Gum uses the Limelight's address, because the SDK only uses that serial number to name the device.
 
 ## Activation
 
 The SDK lists every `res/xml` resource whose root is `<Robot type="FirstInspires-FTC">` as a read-only configuration.
 The Robot Controller activity calls `@OnCreate` hooks at the end of `onCreate`, before its service connects and it builds the hardware map from the active configuration.
 The generated hook makes the generated configuration active then, so each app start uses it without a robot restart.
+The SDK saves the active configuration as its name and resource ID, and loads the resource by ID. A rebuild can renumber resources, so the hook also reactivates when the saved name matches but the saved ID does not.
 
 Choosing another configuration on the Driver Station lasts until the app restarts.
 A read-only configuration cannot be edited on the robot; change the Kotlin and reinstall.
 
-Status: generation, packaging, and the hook's presence in the APK are verified. Activation on a Control Hub is not yet verified.
+Status: generation, packaging, and the hook's presence in the APK are verified. The Limelight and webcam serial numbers parse to the SDK's serial number types on the JVM, and `Limelight3A` accepts them. On a Control Hub (Android 7.1.2), the hook ran at install and replaced the configuration the team had selected; a Limelight or webcam from this configuration has not yet run on one.

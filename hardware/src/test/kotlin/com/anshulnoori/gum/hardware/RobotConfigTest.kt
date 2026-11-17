@@ -17,10 +17,12 @@ class RobotConfigTest {
         val lift by expansion.motor(0)
         val spinner by expansion.crServo(0)
         val limit by expansion.digital(7)
+        val camera by webcam("VendorProduct:vid=0x46d|pid=0x825|connection=")
+        val limelight by limelight(usbId = 2)
     }
 
     @Test
-    fun `writes the SDK configuration with hubs in declaration order and I2C indexes per bus`() {
+    fun `writes the SDK configuration with hubs in declaration order, I2C indexes per bus, and USB devices under the robot`() {
         val expected = """
             <?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
             <Robot type="FirstInspires-FTC">
@@ -38,6 +40,8 @@ class RobotConfigTest {
                         <RevColorSensorV3 name="color" port="1" bus="1" />
                     </LynxModule>
                 </LynxUsbDevice>
+                <Webcam name="camera" serialNumber="VendorProduct:vid=0x46d|pid=0x825|connection=" />
+                <EthernetDevice name="limelight" serialNumber="EthernetOverUsb:eth0:172.29.2.1" port="0" ipAddress="172.29.2.1" />
             </Robot>
 
         """.trimIndent()
@@ -51,7 +55,9 @@ class RobotConfigTest {
         assertSame(Role.CrServo::class.java, Bot.spinner.role)
         assertEquals(0.01, Bot.claw.cacheTolerance)
         assertEquals(0.0, Bot.lift.cacheTolerance, "write caching is opt-in")
-        assertEquals(listOf("frontLeft", "claw", "imu", "pinpoint", "color", "lift", "spinner", "limit"), Bot.devices.map { it.name })
+        assertSame(Role.Limelight::class.java, Bot.limelight.role)
+        assertSame(Role.Webcam::class.java, Bot.camera.role)
+        assertEquals(listOf("frontLeft", "claw", "imu", "pinpoint", "color", "lift", "spinner", "limit", "camera", "limelight"), Bot.devices.map { it.name })
     }
 
     @Test
@@ -80,6 +86,18 @@ class RobotConfigTest {
                 object : RobotConfig("bot") { init { declare(controlHub()) } }
             }
             assertEquals(message, error.message)
+        }
+    }
+
+    @Test
+    fun `rejects USB devices the SDK or the Limelight cannot tell apart`() {
+        for ((declare, message) in listOf<Pair<() -> Any, String>>(
+            { object : RobotConfig("bot") { init { webcam("A1"); webcam("A1") } } } to "bot declares two webcams with serial number A1",
+            { object : RobotConfig("bot") { init { webcam(" ") } } } to "A webcam needs the serial number shown in Configure Robot",
+            { object : RobotConfig("bot") { init { limelight(); limelight(usbId = 1) } } } to "bot declares more than one Limelight",
+            { object : RobotConfig("bot") { init { limelight(usbId = 256) } } } to "Limelight USB ID 256 must be 0 to 255",
+        )) {
+            assertEquals(message, assertFailsWith<IllegalArgumentException> { declare() }.message)
         }
     }
 

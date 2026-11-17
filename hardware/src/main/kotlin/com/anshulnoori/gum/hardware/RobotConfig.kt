@@ -27,6 +27,8 @@ abstract class RobotConfig(val name: String) {
     }
 
     private val hubs = mutableListOf<Hub>()
+    private val webcamSerialNumbers = mutableSetOf<String>()
+    private var hasLimelight = false
     private val names = mutableSetOf<String>()
     private val registered = mutableListOf<Device<*>>()
 
@@ -47,6 +49,33 @@ abstract class RobotConfig(val name: String) {
         return Hub(this, "Expansion Hub $address", address).also { hubs += it }
     }
 
+    /**
+     * A Limelight 3A plugged into a Control Hub USB port. [usbId] is the USB ID in the Limelight's
+     * settings page; the Limelight's address is 172.29.<usbId>.1. Limelight supports one per Control Hub.
+     */
+    protected fun limelight(usbId: Int = 0): DeviceSlot<Role.Limelight> {
+        require(usbId in 0..MAX_USB_ID) { "Limelight USB ID $usbId must be 0 to $MAX_USB_ID" }
+        require(!hasLimelight) { "$name declares more than one Limelight" }
+        hasLimelight = true
+        val address = "172.29.$usbId.1"
+        // The SDK reads the address from ipAddress; the serial number only names the device in logs.
+        val serialNumber = "EthernetOverUsb:eth0:$address"
+        return DeviceSlot { deviceName ->
+            Device(deviceName, null, "EthernetDevice", """ serialNumber="$serialNumber" port="0" ipAddress="$address"""", Role.Limelight::class.java)
+        }
+    }
+
+    /**
+     * A USB webcam, identified by the serial number the Driver Station shows for it in Configure Robot.
+     */
+    protected fun webcam(serialNumber: String): DeviceSlot<Role.Webcam> {
+        require(serialNumber.isNotBlank()) { "A webcam needs the serial number shown in Configure Robot" }
+        require(webcamSerialNumbers.add(serialNumber)) { "$name declares two webcams with serial number $serialNumber" }
+        return DeviceSlot { deviceName ->
+            Device(deviceName, null, "Webcam", """ serialNumber="$serialNumber"""", Role.Webcam::class.java)
+        }
+    }
+
     internal fun register(device: Device<*>) {
         require(names.add(device.name)) { "$name declares two devices named ${device.name}" }
         registered += device
@@ -65,13 +94,15 @@ abstract class RobotConfig(val name: String) {
         for (hub in hubs) {
             xml.append("        <LynxModule name=\"${hub.name}\" port=\"${hub.address}\">\n")
             for (device in registered.filter { it.hub === hub }) {
-                xml.append("            <${device.xmlTag} name=\"${device.name}\" port=\"${device.port}\"")
-                device.bus?.let { xml.append(" bus=\"$it\"") }
-                xml.append(" />\n")
+                xml.append("            ").append(device.xml()).append('\n')
             }
             xml.append("        </LynxModule>\n")
         }
         xml.append("    </LynxUsbDevice>\n")
+        // USB devices sit directly under <Robot>, as the SDK writes them.
+        for (device in registered.filter { it.hub == null }) {
+            xml.append("    ").append(device.xml()).append('\n')
+        }
         xml.append("</Robot>\n")
         return xml.toString()
     }
@@ -80,6 +111,7 @@ abstract class RobotConfig(val name: String) {
         val NAME = Regex("[a-z][a-z0-9_]*")
         const val CONTROL_HUB_ADDRESS = 173
         const val MAX_ADDRESS = 254
+        const val MAX_USB_ID = 255
     }
 }
 
@@ -116,7 +148,7 @@ class Hub internal constructor(
     /** An I2C device on [bus]. Several devices can share a bus. */
     fun <R> i2c(bus: Int, type: I2cType<R>): DeviceSlot<R> {
         require(bus in 0 until I2C_BUSES) { "$name has I2C buses 0 to ${I2C_BUSES - 1}, not $bus" }
-        return DeviceSlot { deviceName -> Device(deviceName, this, i2cCount[bus]++, bus, type.xmlTag, type.role) }
+        return DeviceSlot { deviceName -> Device(deviceName, this, type.xmlTag, """ port="${i2cCount[bus]++}" bus="$bus"""", type.role) }
     }
 
     private fun <R> slot(kind: PortKind, port: Int, xmlTag: String, role: Class<R>, cacheTolerance: Double = 0.0): DeviceSlot<R> {
@@ -125,7 +157,7 @@ class Hub internal constructor(
             "$name ${kind.label} port $port has cache tolerance $cacheTolerance; it must be 0 or more"
         }
         require(used.add(kind to port)) { "$name ${kind.label} port $port is declared twice" }
-        return DeviceSlot { deviceName -> Device(deviceName, this, port, null, xmlTag, role, cacheTolerance) }
+        return DeviceSlot { deviceName -> Device(deviceName, this, xmlTag, """ port="$port"""", role, cacheTolerance) }
     }
 
     internal fun register(device: Device<*>) = config.register(device)
@@ -143,7 +175,8 @@ class Hub internal constructor(
 class DeviceSlot<R> internal constructor(private val create: (String) -> Device<R>) {
     operator fun provideDelegate(thisRef: RobotConfig, property: KProperty<*>): ReadOnlyProperty<RobotConfig, Device<R>> {
         val device = create(property.name)
-        device.hub.register(device)
+        val hub = device.hub
+        if (hub != null) hub.register(device) else thisRef.register(device)
         return ReadOnlyProperty { _, _ -> device }
     }
 }
@@ -151,10 +184,11 @@ class DeviceSlot<R> internal constructor(private val create: (String) -> Device<
 /** A declared device. [R] is its role, which decides the SDK type code receives for it. */
 class Device<R> internal constructor(
     val name: String,
-    internal val hub: Hub,
-    internal val port: Int,
-    internal val bus: Int?,
+    /** The hub the device is wired to, or null for a USB device such as a webcam. */
+    internal val hub: Hub?,
     internal val xmlTag: String,
+    /** The tag's attributes after the name, such as ` port="0" bus="1"`. */
+    private val attributes: String,
     val role: Class<R>,
     /**
      * Write caching for a motor or CR servo power, or a servo position: a write within this distance
@@ -163,5 +197,7 @@ class Device<R> internal constructor(
      */
     val cacheTolerance: Double = 0.0,
 ) {
+    internal fun xml() = "<$xmlTag name=\"$name\"$attributes />"
+
     override fun toString() = name
 }

@@ -15,6 +15,8 @@ object Role {
     class Otos private constructor()
     class ColorSensorV3 private constructor()
     class Distance2m private constructor()
+    class Limelight private constructor()
+    class Webcam private constructor()
 }
 
 /** A motor model. [xmlTag] is the SDK configuration tag. */
