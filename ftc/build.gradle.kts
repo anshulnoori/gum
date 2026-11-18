@@ -3,6 +3,8 @@ plugins {
     kotlin("android")
 }
 
+description = "Gum's FTC host: OpModes on the FTC SDK, Sloth registration, and Panels telemetry."
+
 android {
     namespace = "com.anshulnoori.gum.ftc"
     // Matches the FTC SDK v12.0 template.

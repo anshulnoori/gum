@@ -3,6 +3,8 @@ plugins {
     kotlin("android")
 }
 
+description = "Gum's Pedro Pathing AutoTune setup, with the tuning procedures from Pedro's Quickstart."
+
 android {
     namespace = "com.anshulnoori.gum.pedro.tuning"
     compileSdk = 30
@@ -33,4 +35,21 @@ dependencies {
     testImplementation(kotlin("test-junit"))
     testImplementation("org.firstinspires.ftc:RobotCore:12.0.0")
     testImplementation("org.firstinspires.ftc:Hardware:12.0.0")
+}
+
+// The procedures copied from Pedro's Quickstart keep FIRST's BSD license, whose notice must
+// travel with every source and binary copy; see NOTICE.md.
+extensions.configure<PublishingExtension> {
+    publications.withType<MavenPublication>().configureEach {
+        pom.licenses {
+            license {
+                name.set("BSD-3-Clause-Clear (procedures copied from Pedro Pathing's Quickstart)")
+                url.set("https://github.com/Pedro-Pathing/Quickstart/blob/4f33ef5/LICENSE")
+                distribution.set("repo")
+            }
+        }
+    }
+}
+tasks.matching { it.name == "bundleReleaseAar" || it.name == "sourceReleaseJar" }.configureEach {
+    (this as AbstractArchiveTask).from("NOTICE.md") { into("META-INF/gum-pedro-tuning") }
 }

@@ -2,6 +2,8 @@ plugins {
     kotlin("jvm")
 }
 
+description = "Gum's lifecycle, Ivy scheduling, state-machine subsystems, and gamepad events for FTC programs."
+
 // KStateMachine's DSL inlines Java 17 bytecode. Android's D8 desugars it for the Control Hub.
 kotlin {
     jvmToolchain(17)

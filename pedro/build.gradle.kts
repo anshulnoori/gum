@@ -3,6 +3,8 @@ plugins {
     kotlin("android")
 }
 
+description = "Gum's Pedro Pathing 3 drive through Ivy commands."
+
 android {
     namespace = "com.anshulnoori.gum.pedro"
     compileSdk = 30
