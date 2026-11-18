@@ -106,20 +106,18 @@ open class PedroDrive(val follower: Follower) : Subsystem<PedroDrive.State>(Stat
             }
     }
 
-    /** Holds [pose] and finishes at once; the follower keeps holding it. */
+    /**
+     * Holds [pose] until cancelled or interrupted, so the default [drive] stays suspended meanwhile.
+     * It never finishes by itself; in a routine, limit it: `await(drive.hold(pose).withTimeout(0.5))`.
+     * When it ends, the follower keeps holding until the next drive command.
+     */
     fun hold(pose: Pose): Command = holdCommand { pose }
 
-    /** Holds the pose the robot is at when the command starts. */
+    /** Holds the pose the robot is at when the command starts, like [hold]. */
     fun holdHere(): Command = holdCommand { follower.pose() }
 
-    private fun holdCommand(pose: () -> Pose): Command {
-        var ended = false
-        return Command.build()
-            .requiring(this)
-            .setStart { ended = false; follower.hold(pose()) }
-            .setDone { !ended }
-            .setEnd { ended = it != EndCondition.SUSPENDED }
-    }
+    private fun holdCommand(pose: () -> Pose): Command =
+        Command.build().requiring(this).setStart { follower.hold(pose()) }.setDone { false }
 
     /**
      * Drives from [forward], [lateral], and [turn], read every update, as the drive's default

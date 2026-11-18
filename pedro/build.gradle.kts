@@ -25,11 +25,10 @@ kotlin {
 
 dependencies {
     api(project(":ftc"))
-    // Pedro Pathing 3 and Ivy's commands for it, from the same authors as Ivy.
+    // Pedro Pathing 3, from the same authors as Ivy.
     api("com.pedropathing:core:3.0.2")
     // Pedro's REV hub drivetrains and localizers, such as Mecanum and PinpointLocalizer.
     api("com.pedropathing:revhub:3.0.2")
-    api("com.pedropathing.ivy:pedro:1.1.1")
     compileOnly("org.firstinspires.ftc:RobotCore:12.0.0")
     compileOnly("org.firstinspires.ftc:Hardware:12.0.0")
     compileOnly("org.firstinspires.ftc:FtcCommon:12.0.0")

@@ -1,8 +1,10 @@
 package com.anshulnoori.gum.pedro
 
 import com.anshulnoori.gum.core.Button
+import com.anshulnoori.gum.core.Outcome
 import com.anshulnoori.gum.core.routine
 import com.anshulnoori.gum.core.teleop
+import com.anshulnoori.gum.core.withTimeout
 import com.bylazar.field.Canvas
 import com.bylazar.field.Circle
 import com.bylazar.field.PanelsField
@@ -176,6 +178,59 @@ class PedroDriveTest {
         session.tick()
         assertEquals(PedroDrive.State.IDLE, drive.state)
         assertEquals("stop", calls.last())
+        session.stop()
+        PanelsField.field.canvas = Canvas()
+    }
+
+    @Test
+    fun `a hold keeps the stick drive suspended until it is cancelled, and then the stick drive resumes`() {
+        lateinit var drive: PedroDrive
+        lateinit var sticks: Command
+        val session = teleop<Unit, PedroDrive>("Drive", dependencies = { PedroDrive(Follower(localizer, drivetrain, algorithm)) }) {
+            drive = it
+            sticks = drive.drive({ 1.0 }, { 0.0 }, { 0.0 })
+            onStart { sticks.schedule() }
+        }.initialize(Unit)
+        session.start()
+        session.tick()
+        assertEquals(PedroDrive.State.DRIVER, drive.state)
+
+        val hold = drive.holdHere()
+        hold.schedule()
+        repeat(3) { session.tick() }
+        assertEquals(PedroDrive.State.HOLDING, drive.state, "the hold outlasts one update")
+        assertTrue(hold.isScheduled)
+        assertTrue(sticks.isScheduled, "Ivy keeps the stick drive to resume")
+
+        hold.cancel()
+        session.tick()
+        session.tick()
+        assertEquals(PedroDrive.State.DRIVER, drive.state, "the stick drive resumes once the hold ends")
+        session.stop()
+        PanelsField.field.canvas = Canvas()
+    }
+
+    @Test
+    fun `an auto limits a hold with withTimeout, and the follower keeps holding after it`() {
+        lateinit var drive: PedroDrive
+        var outcome: Outcome? = null
+        val session = teleop<Unit, PedroDrive>("Auto", dependencies = { PedroDrive(Follower(localizer, drivetrain, algorithm)) }) {
+            drive = it
+            val auto = routine(drive) { outcome = await(drive.hold(Pose(10.0, 0.0, 0.0)).withTimeout(0.05)) }
+            onStart { auto.schedule() }
+        }.initialize(Unit)
+        session.start()
+        session.tick()
+        assertEquals(null, outcome, "the hold is still running before its timeout")
+        assertEquals(PedroDrive.State.HOLDING, drive.state)
+
+        Thread.sleep(60)
+        session.tick()
+        assertEquals(Outcome.TIMED_OUT, outcome)
+        calls.clear()
+        session.tick()
+        assertEquals(PedroDrive.State.HOLDING, drive.state)
+        assertTrue("hold at 10.0,0.0" in calls, "the follower still holds the pose")
         session.stop()
         PanelsField.field.canvas = Canvas()
     }
