@@ -47,7 +47,7 @@ The Gradle plugin in `gradle-plugin/` is a separate build that FTC apps include 
 The wrapper pins Gradle 9.1.0 and verifies its distribution checksum.
 The modules use Kotlin 2.3.20 and Ivy 1.1.1. `:core` targets Java 17 bytecode because KStateMachine 0.38.1 does; the other modules target Java 8. `:ftc` uses AGP 8.13.2 and compiles against FTC SDK 12.0.0.
 Consumers can build Gum from source with a Gradle `includeBuild`; the [apex-2026](https://ampcode.com/@anshulnoori/apex-2026) robot does this.
-The library modules can also publish to a Maven repository; see [Publishing](docs/publishing.md).
+The library modules and the Gradle plugin can also publish to a Maven repository; see [Publishing](docs/publishing.md).
 
 In a Debian-based orb, `.agents/setup` installs JDK 17 and runs the tests.
 FTC device tests remain necessary before competition use.
