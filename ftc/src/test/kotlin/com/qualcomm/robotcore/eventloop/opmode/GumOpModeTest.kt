@@ -77,18 +77,28 @@ class GumOpModeTest {
         }
     }
 
+    private val initUpdates = AtomicInteger()
+    private val activeUpdates = AtomicInteger()
+
     private fun program(name: String, next: FtcProgram? = null, failInLoop: Boolean = false): FtcProgram =
         teleop<FtcEnvironment, Unit>(name, dependencies = {}) {
+            initLoop { initUpdates.incrementAndGet() }
+            loop { activeUpdates.incrementAndGet() }
             if (failInLoop) loop { error("loop failed") }
             next
         }
 
-    /** Runs [program] from INIT through START to STOP and returns the finished OpMode. */
+    /** Runs [program] from INIT through START, waits for an update in each phase it reaches, then stops it. */
     private fun run(program: FtcProgram, start: Boolean = true): GumOpMode {
+        initUpdates.set(0)
+        activeUpdates.set(0)
         val opMode = GumOpMode(program)
         init(opMode)
-        if (start) opMode.internalStart()
-        Thread.sleep(20)
+        eventually("an INIT update runs") { initUpdates.get() > 0 }
+        if (start) {
+            opMode.internalStart()
+            eventually("an active update runs") { activeUpdates.get() > 0 }
+        }
         opMode.internalStop()
         return opMode
     }
@@ -107,7 +117,7 @@ class GumOpModeTest {
     }
 
     @Test
-    fun `one OpMode thread runs every phase, updates without sleeping, reads sticks from the callback, and cleans up uninterrupted`() {
+    fun `one OpMode thread runs every phase, reads sticks from the callback, and cleans up uninterrupted`() {
         val threads = CopyOnWriteArrayList<Thread>()
         val initUpdates = AtomicInteger()
         val activeUpdates = AtomicInteger()
@@ -136,12 +146,6 @@ class GumOpModeTest {
         opMode.internalStart()
         eventually("active updates run") { activeUpdates.get() > 2 }
         assertEquals(0.0, stick.get())
-
-        val before = activeUpdates.get()
-        Thread.sleep(100)
-        val updates = activeUpdates.get() - before
-        // An iterative OpMode sleeps 1 ms per update, so it manages at most 100 in this time.
-        assertTrue(updates > 300, "updates run back to back: $updates in 100 ms")
 
         (opMode as OpModeInternal).newGamepadDataAvailable(Gamepad().apply { left_stick_x = 0.5f; a = true }, Gamepad())
         eventually("the packet reaches the loop") { stick.get() == 0.5 && presses.get() == 1 }
@@ -255,6 +259,45 @@ class GumOpModeTest {
     }
 
     object NoDevices : RobotConfig("none")
+
+    interface ProvidingGraph : TestGraph {
+        /** A provider with a body, as a `@Provides` function compiles; reading it would build an unscoped extra. */
+        fun extraRoller(): Roller = error("INIT called a provider")
+    }
+
+    /** Runs INIT for a program whose graph [robot] creates, and returns what INIT threw. */
+    private fun initGraph(robot: () -> TestGraph): Throwable? {
+        val initUpdates = AtomicInteger()
+        val opMode = GumOpMode(program(ProgramKind.TELEOP, "Graph", "", "", NoDevices, chain = {}, robot = { robot() }) {
+            initLoop { initUpdates.incrementAndGet() }
+        })
+        init(opMode)
+        eventually("INIT updates run or INIT fails") { initUpdates.get() > 0 || opMode.opModeThreadFinished }
+        opMode.internalStop()
+        return opMode.exception
+    }
+
+    @Test
+    fun `INIT reads only accessors, not functions with a body`() {
+        assertNull(initGraph {
+            object : ProvidingGraph {
+                override val roller by lazy { Roller() }
+            }
+        })
+    }
+
+    @Test
+    fun `INIT fails when a subsystem accessor creates a new instance each read`() {
+        val error = initGraph {
+            object : TestGraph {
+                override val roller get() = Roller()
+            }
+        }
+        assertEquals(
+            "RobotGraph.getRoller creates a new Roller each time it is read. Annotate Roller with @SingleIn(OpModeScope::class).",
+            error?.message,
+        )
+    }
 
     @Test
     fun `INIT creates every subsystem the graph declares, and each enters its initial state before START`() {

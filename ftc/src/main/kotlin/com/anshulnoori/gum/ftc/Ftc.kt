@@ -5,6 +5,7 @@ import com.anshulnoori.gum.core.Program
 import com.anshulnoori.gum.core.ProgramKind
 import com.anshulnoori.gum.core.ProgramMetadata
 import com.anshulnoori.gum.core.ProgramScope
+import com.anshulnoori.gum.core.Subsystem
 import com.anshulnoori.gum.core.UpdatePhase
 import com.anshulnoori.gum.core.UpdateTiming
 import com.anshulnoori.gum.core.autonomous
@@ -30,6 +31,7 @@ import org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta
 import java.lang.reflect.Field
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Modifier
+import java.util.concurrent.locks.LockSupport
 
 /** FTC objects for one OpMode session. */
 class FtcEnvironment internal constructor(
@@ -146,18 +148,30 @@ fun <C : Any, R : Robot> program(
 /**
  * Calls every accessor TeamCode's `RobotGraph` declares, such as `val intake: Intake`. Metro creates
  * a scoped value on first access, so this creates every subsystem now, not when code first uses it.
+ * Only abstract methods are accessors: a `@Provides` function has a body, and calling it here would
+ * build an unscoped extra instance. A subsystem accessor that returns a new instance each time,
+ * because the subsystem lacks its scope, fails INIT; two instances would fight over one mechanism.
  */
-private fun readAccessors(robot: Robot) {
+internal fun readAccessors(robot: Robot) {
     val graphs = generateSequence<Class<*>>(robot.javaClass) { it.superclass }
         .flatMap { it.interfaces.asSequence() }
         .filter { Robot::class.java.isAssignableFrom(it) && it != Robot::class.java }
     for (method in graphs.flatMap { it.methods.asSequence() }.distinct()) {
-        if (method.parameterTypes.isNotEmpty() || method.declaringClass == Robot::class.java) continue
-        if (Modifier.isStatic(method.modifiers) || method.returnType == Void.TYPE) continue
-        try {
-            method.invoke(robot)
-        } catch (error: InvocationTargetException) {
-            throw error.targetException
+        if (method.parameterTypes.isNotEmpty() || method.returnType == Void.TYPE) continue
+        if (!Modifier.isAbstract(method.modifiers)) continue
+        val read = {
+            try {
+                method.invoke(robot)
+            } catch (error: InvocationTargetException) {
+                throw error.targetException
+            }
+        }
+        val value = read()
+        if (value is Subsystem<*>) {
+            check(read() === value) {
+                "RobotGraph.${method.name} creates a new ${value.javaClass.simpleName} each time it is read. " +
+                    "Annotate ${value.javaClass.simpleName} with @SingleIn(OpModeScope::class)."
+            }
         }
     }
 }
@@ -309,11 +323,17 @@ internal class GumOpMode(
             this.environment = environment
             val diagnostics = if (program.debug) Diagnostics(UpdateTiming()) else null
             session = program.initialize(environment, diagnostics?.timing)
+            val reconnect = HubReconnect(hubs, hardware, session)
             sendTelemetry()
-            while (opModeInInit()) update(hubs, environment, diagnostics, session::tick)
+            while (opModeInInit()) {
+                update(hubs, reconnect, environment, diagnostics, session::tick)
+                // INIT has nothing to keep up with, so it does not hold a core at full load.
+                LockSupport.parkNanos(INIT_UPDATE_PAUSE_NANOS)
+            }
             if (!isStopRequested) {
-                update(hubs, environment, diagnostics, session::start)
-                while (opModeIsActive()) update(hubs, environment, diagnostics, session::tick)
+                update(hubs, reconnect, environment, diagnostics, session::start)
+                // opModeIsActive() also yields the thread on every call.
+                while (isStarted && !isStopRequested) update(hubs, reconnect, environment, diagnostics, session::tick)
             }
             ended = true
         } finally {
@@ -336,12 +356,21 @@ internal class GumOpMode(
         }
     }
 
-    private inline fun update(hubs: List<LynxModule>, environment: FtcEnvironment, diagnostics: Diagnostics?, step: () -> Unit) {
+    private inline fun update(
+        hubs: List<LynxModule>,
+        reconnect: HubReconnect,
+        environment: FtcEnvironment,
+        diagnostics: Diagnostics?,
+        step: () -> Unit,
+    ) {
         val timing = diagnostics?.timing
+        (environment.telemetry as PanelsMirroredTelemetry).live = panelsLive()
         // Added first so the timing heads the telemetry; adding counts as Other.
         diagnostics?.addTo(environment.telemetry)
         timing?.begin()
-        for (hub in hubs) hub.clearBulkCache()
+        var index = 0
+        while (index < hubs.size) hubs[index++].clearBulkCache()
+        reconnect.check()
         environment.sample()
         timing?.end(UpdatePhase.INPUT)
         step()
@@ -359,5 +388,34 @@ internal class GumOpMode(
 
     override fun onGamepadData(gamepad1: Gamepad, gamepad2: Gamepad) {
         environment?.report(gamepad1, gamepad2)
+    }
+
+    private companion object {
+        const val INIT_UPDATE_PAUSE_NANOS = 1_000_000L
+    }
+}
+
+/**
+ * Notices a hub that stopped responding and came back, such as after it lost power. The hub then
+ * has lost every output, so Gum forgets its write caches and sets every subsystem's outputs again.
+ * The SDK has no event for this; [LynxModule.isNotResponding] is a field read, so checking it each
+ * update costs nothing. A reset short enough that no command times out is not noticed.
+ */
+private class HubReconnect(private val hubs: List<LynxModule>, private val hardware: Hardware, private val session: OpModeSession) {
+    private val lost = BooleanArray(hubs.size)
+
+    fun check() {
+        var reconnected = false
+        var index = 0
+        while (index < hubs.size) {
+            val notResponding = hubs[index].isNotResponding
+            if (lost[index] && !notResponding) reconnected = true
+            lost[index] = notResponding
+            index++
+        }
+        if (reconnected) {
+            hardware.forgetWrites()
+            session.reapplyOutputs()
+        }
     }
 }

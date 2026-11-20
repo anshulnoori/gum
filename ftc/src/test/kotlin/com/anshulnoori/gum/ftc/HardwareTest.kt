@@ -10,6 +10,7 @@ import com.qualcomm.robotcore.hardware.Servo
 import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 
 class HardwareTest {
@@ -39,6 +40,8 @@ class HardwareTest {
     private val hardware = Hardware(object : HardwareMap(null, null) {
         @Suppress("UNCHECKED_CAST")
         override fun <T> get(type: Class<out T>, name: String): T = type.cast(devices.getValue(name)) as T
+
+        override fun <T> tryGet(type: Class<out T>, name: String): T? = devices[name]?.let { type.cast(it) }
     })
 
     @Test
@@ -77,5 +80,23 @@ class HardwareTest {
                 "claw.setPwmDisable()", "claw.setPosition(0.015)"),
             sent,
         )
+    }
+
+    @Test
+    fun `INIT fails when the declaration changed since the installed app's configuration`() {
+        val installed = RobotConfigActivation.installedWiring
+        try {
+            RobotConfigActivation.installedWiring = "an older wiring"
+            val error = assertFailsWith<IllegalStateException> { hardware.requireDevices(Bot) }
+            assertEquals(
+                "Bot changed since the app was installed. Sloth reloads it, but the robot configuration \"bot\" " +
+                    "comes from the installed app. Install the app again.",
+                error.message,
+            )
+            RobotConfigActivation.installedWiring = Bot.wiringHash()
+            hardware.requireDevices(Bot)
+        } finally {
+            RobotConfigActivation.installedWiring = installed
+        }
     }
 }

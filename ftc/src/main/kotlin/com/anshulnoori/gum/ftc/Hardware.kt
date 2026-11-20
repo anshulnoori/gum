@@ -58,15 +58,30 @@ class Hardware internal constructor(
     private fun <T> lookup(device: Device<*>): T = map.get(sdkType(device.role), device.name) as T
 
     private val cachedDevices = HashMap<Device<*>, Any>()
+    private val writeCaches = ArrayList<WriteCache>()
 
     /** The SDK device, or with a cache tolerance, one write-caching wrapper for the whole session. */
     @Suppress("UNCHECKED_CAST")
     private fun <T : Any> cached(device: Device<*>, wrap: (T, WriteCache) -> T): T =
         if (device.cacheTolerance == 0.0) lookup(device)
-        else cachedDevices.getOrPut(device) { wrap(lookup(device), WriteCache(device.cacheTolerance)) } as T
+        else cachedDevices.getOrPut(device) { wrap(lookup(device), WriteCache(device.cacheTolerance).also { writeCaches += it }) } as T
 
-    /** Fails INIT with one message naming every declared device the active configuration lacks. */
+    /** Makes the next write to every write-caching device go through, such as after a hub lost its outputs. */
+    internal fun forgetWrites() {
+        var index = 0
+        while (index < writeCaches.size) writeCaches[index++].forget()
+    }
+
+    /**
+     * Fails INIT when the installed configuration is older than [config], or with one message
+     * naming every declared device the active configuration lacks.
+     */
     internal fun requireDevices(config: RobotConfig) {
+        val installed = RobotConfigActivation.installedWiring
+        check(installed == null || installed == config.wiringHash()) {
+            "${config.javaClass.simpleName} changed since the app was installed. Sloth reloads it, but the " +
+                "robot configuration \"${config.name}\" comes from the installed app. Install the app again."
+        }
         val missing = config.devices.filter { map.tryGet(sdkType(it.role), it.name) == null }
         check(missing.isEmpty()) {
             "The active robot configuration is missing ${missing.joinToString()} from \"${config.name}\". " +
@@ -153,6 +168,10 @@ object RobotConfigActivation {
     private const val PREFERENCES = "gum"
     private const val INSTALLED_WIRING = "installedWiring"
 
+    /** The wiring hash of the configuration in the installed app; null until the app's hook runs. */
+    @Volatile
+    internal var installedWiring: String? = null
+
     /**
      * Makes the generated configuration active when its wiring is new to this Robot Controller, and
      * otherwise keeps the configuration chosen on the Driver Station. [wiring] is a hash of the
@@ -161,6 +180,7 @@ object RobotConfigActivation {
      */
     @JvmStatic
     fun activate(context: Context, name: String, resourceId: Int, wiring: String) {
+        installedWiring = wiring
         val manager = RobotConfigFileManager(context as Activity)
         val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
         val active = manager.activeConfig
