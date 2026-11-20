@@ -1,7 +1,9 @@
 package com.anshulnoori.gum.gradle;
 
 import java.util.Arrays;
+import javax.inject.Inject;
 import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.file.FileSystemOperations;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.CacheableTask;
 import org.gradle.api.tasks.Input;
@@ -31,10 +33,13 @@ public abstract class GenerateRobotConfig extends JavaExec {
     @OutputDirectory
     public abstract DirectoryProperty getKotlinDirectory();
 
+    @Inject
+    protected abstract FileSystemOperations getFileSystem();
+
     @Override
     @TaskAction
     public void exec() {
-        getProject().delete(getResDirectory(), getJavaDirectory(), getKotlinDirectory());
+        getFileSystem().delete(spec -> spec.delete(getResDirectory(), getJavaDirectory(), getKotlinDirectory()));
         setArgs(Arrays.asList(
                 getClasses().get().getAsFile().getPath(),
                 getResDirectory().get().getAsFile().getPath(),

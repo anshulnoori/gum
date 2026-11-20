@@ -16,7 +16,24 @@ java {
 
 dependencies {
     compileOnly("com.android.tools.build:gradle-api:8.13.2")
+    // Reads the version of the Kotlin plugin the app applies.
+    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin-api:2.3.20")
 }
+
+// The plugin resolves Gum's hardware module at its own version, which this resource carries.
+val versionResource = tasks.register("gumVersionResource") {
+    val text = version.toString()
+    val directory = layout.buildDirectory.dir("generated/gum-version")
+    inputs.property("version", text)
+    outputs.dir(directory)
+    doLast {
+        directory.get().file("com/anshulnoori/gum/gradle/gum-version.txt").asFile.apply {
+            parentFile.mkdirs()
+            writeText(text)
+        }
+    }
+}
+sourceSets.main { resources.srcDir(versionResource) }
 
 gradlePlugin {
     plugins {

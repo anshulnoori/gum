@@ -6,7 +6,6 @@ description = "Gum's lifecycle, Ivy scheduling, state-machine subsystems, and ga
 
 // KStateMachine's DSL inlines Java 17 bytecode. Android's D8 desugars it for the Control Hub.
 kotlin {
-    jvmToolchain(17)
     compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
 }
 

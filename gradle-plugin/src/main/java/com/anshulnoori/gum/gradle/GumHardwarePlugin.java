@@ -2,7 +2,10 @@ package com.anshulnoori.gum.gradle;
 
 import com.android.build.api.dsl.ApplicationExtension;
 import com.android.build.api.variant.ApplicationAndroidComponentsExtension;
-import java.util.Arrays;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
@@ -13,8 +16,8 @@ import org.gradle.api.attributes.Usage;
 import org.gradle.api.attributes.java.TargetJvmEnvironment;
 import org.gradle.api.file.Directory;
 import org.gradle.api.provider.Provider;
-import org.gradle.api.tasks.JavaExec;
 import org.gradle.api.tasks.TaskProvider;
+import org.jetbrains.kotlin.gradle.plugin.KotlinBasePlugin;
 
 /**
  * Generates the FTC robot configuration from the {@code RobotConfig} object in
@@ -26,9 +29,6 @@ import org.gradle.api.tasks.TaskProvider;
  * module, so those sources cannot use the FTC SDK.
  */
 public class GumHardwarePlugin implements Plugin<Project> {
-    static final String GUM_VERSION = "0.1.0-SNAPSHOT";
-    /** Compiles the hardware sources for the build machine. Keep in step with the app's Kotlin plugin. */
-    static final String KOTLIN_VERSION = "2.3.20";
     static final String SOURCES = "src/hardware/kotlin";
 
     @Override
@@ -40,25 +40,20 @@ public class GumHardwarePlugin implements Plugin<Project> {
         project.getExtensions().getByType(ApplicationExtension.class)
                 .getSourceSets().getByName("main").getKotlin().srcDir(SOURCES);
 
+        // The hardware module of this plugin's own version, compiled by the app's Kotlin version.
         Configuration hardware = jvmClasspath(project, "gumHardware",
-                "com.anshulnoori.gum:hardware:" + GUM_VERSION);
+                project.provider(() -> "com.anshulnoori.gum:hardware:" + gumVersion()));
         Configuration compiler = jvmClasspath(project, "gumKotlinCompiler",
-                "org.jetbrains.kotlin:kotlin-compiler-embeddable:" + KOTLIN_VERSION);
+                project.provider(() -> "org.jetbrains.kotlin:kotlin-compiler-embeddable:" + kotlinVersion(project)));
 
         Provider<Directory> classes = project.getLayout().getBuildDirectory().dir("gum/hardware-classes");
-        TaskProvider<JavaExec> compile = project.getTasks().register("compileGumHardware", JavaExec.class, task -> {
+        TaskProvider<CompileGumHardware> compile = project.getTasks().register("compileGumHardware", CompileGumHardware.class, task -> {
             task.setDescription("Compiles " + SOURCES + " for the build machine.");
             task.setClasspath(compiler);
             task.getMainClass().set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler");
-            task.getInputs().dir(SOURCES).withPropertyName("sources");
-            task.getInputs().files(hardware).withPropertyName("hardwareClasspath");
-            task.getOutputs().dir(classes).withPropertyName("classes");
-            task.doFirst(t -> project.delete(classes));
-            task.getArgumentProviders().add(() -> Arrays.asList(
-                    "-d", classes.get().getAsFile().getPath(),
-                    "-classpath", hardware.getAsPath(),
-                    "-no-stdlib", "-no-reflect", "-jvm-target", "1.8",
-                    project.file(SOURCES).getPath()));
+            task.getSources().set(project.getLayout().getProjectDirectory().dir(SOURCES));
+            task.getHardwareClasspath().from(hardware);
+            task.getClassesDirectory().set(classes);
         });
 
         project.getExtensions().getByType(ApplicationAndroidComponentsExtension.class).onVariants(
@@ -70,7 +65,7 @@ public class GumHardwarePlugin implements Plugin<Project> {
                                 task.setDescription("Writes the robot configuration, its activation hook, and program builders.");
                                 task.setClasspath(hardware);
                                 task.getMainClass().set("com.anshulnoori.gum.hardware.Generate");
-                                task.getClasses().fileProvider(compile.map(t -> classes.get().getAsFile()));
+                                task.getClasses().set(compile.flatMap(CompileGumHardware::getClassesDirectory));
                                 task.getNamespace().set(variant.getNamespace());
                             });
                     variant.getSources().getRes().addGeneratedSourceDirectory(generate, GenerateRobotConfig::getResDirectory);
@@ -80,7 +75,25 @@ public class GumHardwarePlugin implements Plugin<Project> {
                 });
     }
 
-    private static Configuration jvmClasspath(Project project, String name, String dependency) {
+    /** This plugin's version, which the build writes into its resources. */
+    private static String gumVersion() {
+        try (InputStream in = GumHardwarePlugin.class.getResourceAsStream("gum-version.txt")) {
+            if (in == null) throw new GradleException("Gum's Gradle plugin is missing its version resource");
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+        } catch (IOException error) {
+            throw new GradleException("Gum's Gradle plugin cannot read its version", error);
+        }
+    }
+
+    /** The version of the Kotlin plugin the app applies, so the hardware sources compile the same way. */
+    private static String kotlinVersion(Project project) {
+        return project.getPlugins().withType(KotlinBasePlugin.class).stream()
+                .map(KotlinBasePlugin::getPluginVersion)
+                .findFirst()
+                .orElseThrow(() -> new GradleException("Apply the Kotlin Android plugin before Gum's hardware plugin"));
+    }
+
+    private static Configuration jvmClasspath(Project project, String name, Provider<String> dependency) {
         Configuration configuration = project.getConfigurations().create(name, c -> {
             c.setCanBeConsumed(false);
             c.setCanBeResolved(true);
@@ -95,7 +108,7 @@ public class GumHardwarePlugin implements Plugin<Project> {
                         project.getObjects().named(TargetJvmEnvironment.class, TargetJvmEnvironment.STANDARD_JVM));
             });
         });
-        project.getDependencies().add(name, dependency);
+        configuration.getDependencies().addLater(dependency.map(project.getDependencies()::create));
         return configuration;
     }
 }
