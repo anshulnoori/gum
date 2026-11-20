@@ -134,8 +134,7 @@ class Intake(
 - A subsystem joins the session running on its thread when it is constructed; constructing one outside a session fails.
 - Named commands are a subsystem's whole API. `request`, `hold`, and `reach` are protected, so programs call `intake.collect()`, not `intake.request(...)`.
 - `request(state)` is an Ivy command that reserves the subsystem, transitions to `state`, and finishes at once. Any state can be requested from any other.
-- `request(state, from = ...)` is valid only from the named state, or from a set of states. From any other state the request is refused: the state stays, and Gum reports it. Requesting the current state is never refused.
-- A refused request is never silent. Gum passes a message naming the subsystem, the requested state, and the current state to `onRefused` callbacks; FTC programs log it to RobotLog and add it to the Driver Station's telemetry log. Without a callback, Gum prints it to standard error. The request also ends with the refused outcome, which a routine's `await` returns.
+- `request(state, from = ...)` is valid only from the named state, or from a set of states. From any other state the state stays, and Gum reports nothing; a team that wants a log checks the state itself. Requesting the current state always runs its effect.
 - `onEntry` runs on every entry, including the initial state, which each subsystem enters at INIT, after setup. A subsystem created later enters it on its first update.
 - STOP returns each subsystem to its initial state, whatever its commands allow.
 
@@ -169,7 +168,7 @@ class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Sub
 - `during(state)` runs on every update after START, after commands and automatic transitions.
 - `beforeCommands()` runs on every update after START, before button actions and commands, for reads that commands decide from in the same update, such as a localizer's pose.
 - `reach(state)` reserves the subsystem and finishes once it is in `state`.
-- A `reach` that never arrives waits forever; `reach(state).withTimeout(seconds)` gives it a limit. See [outcomes and timeouts](#outcomes-and-timeouts). Faults are not reported yet.
+- A `reach` that never arrives waits forever; Ivy limits it, as in `reach(state).raceWith(waitMs(2000.0))`. See [composing commands](#composing-commands). Faults are not reported yet.
 
 ## Controller events
 
@@ -196,7 +195,7 @@ val main = teleop("Main") { robot ->
 - `isDown`, `wasPressed`, and `wasReleased` describe the latest update, in INIT and after START, so INIT code polls them.
 - `onPress` and `onRelease` actions run only after START, before Ivy advances, so a command they schedule starts and runs in that update. Bind them during setup.
 - A button held through START, or down when first used, presses only after a release.
-- `whileHeld { command }` schedules a fresh command on press and cancels it on release. A subsystem's hold command, built with `hold(state)`, enters `state`, keeps running, and returns to the initial state when cancelled or interrupted, so a newer hold on the same subsystem takes over. If an automatic transition leaves `state`, or the hold's request is refused, the hold ends and leaves the state alone.
+- `whileHeld { command }` schedules a fresh command on press and cancels it on release. A subsystem's hold command, built with `hold(state)`, enters `state`, keeps running, and returns to the initial state when cancelled or interrupted, so a newer hold on the same subsystem takes over. If an automatic transition leaves `state`, or its `from` does not allow the request, the hold ends and leaves the state alone.
 - STOP from an action skips the remaining actions.
 - Programs use `gamepad1`, `gamepad2`, `telemetry`, and `hardwareMap` directly. The gamepads are `Controller`s: every SDK button as a `Button` (PlayStation and Xbox names are the same button), sticks and triggers as `Double`, and `raw` for the SDK gamepad. Sticks and triggers also come from the SDK's callback: each update reads the newest packet that arrived before it started. `raw` is copied on another thread, so values read from it can mix two packets.
 - `Button { condition }` checks a condition at the start of each update, for inputs with no events, such as a sensor threshold. Hub sensors have no SDK callbacks; they change when Gum bulk-reads the hubs, once per update.
@@ -210,40 +209,21 @@ val main = teleop("Main") { robot ->
   - A derived button starts in the state its sources give it, so a source held at creation or through START does not press it. It cannot `post`.
 - `toggleOnPress { command }` schedules a fresh command at a press and cancels it at the next one. If the command has ended by then, the press schedules a fresh one.
 
-## Routines
+## Composing commands
+
+Gum has no composition API of its own. Programs compose subsystem commands with Ivy's groups and decorators:
 
 ```kotlin
-val score = routine(robot.intake, robot.flywheel) {
-    await(robot.intake.collect())
-    waitSeconds(0.5)
-    await(robot.flywheel.spinTo(3000.0))
-}
+val score = robot.intake.collect()
+    .then(waitMs(500.0))
+    .then(robot.flywheel.spinTo(3000.0).raceWith(waitMs(2000.0)))
+    .then(conditional({ robot.flywheel.state == Flywheel.State.READY }, robot.transfer.fire(), robot.flywheel.stop()))
 ```
 
-- `routine` is an Ivy command written as sequential code with Kotlin's built-in coroutines: no threads, no dispatcher. It runs inside Ivy's update; each suspension resumes on a later update.
-- `await(command)` runs a command inside the routine; one that finishes at once costs no update. `waitUntil`, `waitSeconds`, and `nextUpdate` wait.
-- Like Ivy's groups, a routine owns everything it runs: it reserves the subsystems it lists, and `await` fails for a command that needs anything else.
-- When Ivy interrupts or cancels a routine, its awaited command ends as interrupted and the routine's `finally` blocks run. An exception from the body stops the OpMode.
-- Each routine records where it was created. When its body throws, the error carries a suppressed `RoutineCreation` whose stack trace starts at the `routine { }` call, so the log shows which routine failed as well as the failing line. Recording it costs one stack capture each time `routine { }` runs, not each time the routine is scheduled.
-
-### Outcomes and timeouts
-
-```kotlin
-val score = routine(robot.intake, robot.flywheel) {
-    if (await(robot.flywheel.spinTo(3000.0).withTimeout(2.0)) == Outcome.TIMED_OUT) return@routine
-    await(robot.intake.collect())
-}
-```
-
-- `await(command)` returns the command's `Outcome`: how it ended.
-  - `FINISHED`: it did its work. A request entered its state, a `reach` arrived, a routine's body returned. Any non-Gum command that finishes reports `FINISHED`.
-  - `REFUSED`: its subsystem refused the request, so the state stayed. Both `request` and `hold` report it.
-  - `INTERRUPTED`: it ended before doing its work. A `hold` never finishes by itself, so a hold whose state the subsystem left by an automatic transition reports it. A routine or `reach` that Ivy interrupts or cancels reports it too.
-  - `TIMED_OUT`: its `withTimeout` ran out first.
-- The routine continues whatever the outcome. Check it before a step that needs the last one to succeed.
-- `command.withTimeout(seconds)` works on any command, including a routine. Its time counts from when it starts, and Gum checks it once per update. When it runs out, Gum ends the command as interrupted, so the command runs its own interrupt handling: a routine's `finally` blocks run, and a `follow` holds where the robot is. The outcome is then `TIMED_OUT`. A command that finishes in time keeps its own outcome, such as `REFUSED`.
-- The timed command keeps the command's requirements, priority, and behaviors, so Ivy schedules it the same way. Scheduled with Ivy instead of awaited, it still ends at the timeout; nothing reads its outcome.
-- Ivy's own groups, such as `then`, `with`, and `raceWith`, do not pass outcomes on: `request(...).then(reach(...))` reports `FINISHED` even when its request is refused. Await each step in a routine to see its outcome.
+- `then`, `with`, `raceWith`, `until`, `sequential`, `parallel`, `race`, `deadline`, `conditional`, `match`, `repeat`, `loop`, and `lazy` come from Ivy, with Ivy's requirements: a group reserves everything its children reserve.
+- Whether a step succeeded is read from state, not from the command: a request `from` states that do not include the current one leaves the state as it is, and a `reach` that has not arrived leaves the subsystem short of its state.
+- `lazy { }` builds its command when it starts, so it reserves nothing by itself; add `.requiring(...)` for the subsystems it uses.
+- Ivy has no timeout decorator. `cmd.raceWith(waitMs(ms))` limits a command; a team that wants a name for it can write one line: `fun Command.timeout(ms: Double) = raceWith(waitMs(ms))`.
 
 ## Background reads
 
@@ -332,7 +312,7 @@ Gum phases (ms) : Input 0.02, Buttons 0.01, Ivy 0.30, Subsystems 3.10, Program 0
 ```
 
 - The loop line is the time from the start of one update to the start of the next: its average and maximum over the last second, and updates per second.
-- The phases line is the average time per update in each phase, in the order they run: Input (clearing the bulk cache and taking the newest gamepad packet), Buttons, Ivy (`Scheduler.execute`, including routines), Subsystems (`beforeCommands`, which runs before Buttons, then automatic transitions and `during`), Program (the program's `initLoop`, `onStart`, or `loop` callbacks), Telemetry (sending to the Driver Station), and Panels. Other is the time outside every phase, such as the SDK's own checks between updates and adding these two lines.
+- The phases line is the average time per update in each phase, in the order they run: Input (clearing the bulk cache and taking the newest gamepad packet), Buttons, Ivy (`Scheduler.execute`), Subsystems (`beforeCommands`, which runs before Buttons, then automatic transitions and `during`), Program (the program's `initLoop`, `onStart`, or `loop` callbacks), Telemetry (sending to the Driver Station), and Panels. Other is the time outside every phase, such as the SDK's own checks between updates and adding these two lines.
 - A hub's bulk read happens at the first hardware read after the cache clears, so its time counts in the phase that reads first, usually Subsystems.
 - Ivy and Subsystems run only after START, so they show 0.00 in INIT. The first second after START also includes the last INIT updates and the START update. Nothing shows until the first second has passed.
 - Gum reads the clock once per phase and adds to fixed counters, so timing allocates nothing per update. It formats the two lines once per second; each update adds the same two strings again.

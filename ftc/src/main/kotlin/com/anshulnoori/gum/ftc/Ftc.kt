@@ -21,7 +21,6 @@ import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerImpl
 import com.qualcomm.robotcore.hardware.Gamepad
 import com.qualcomm.robotcore.hardware.HardwareMap
 import com.qualcomm.robotcore.hardware.VoltageSensor
-import com.qualcomm.robotcore.util.RobotLog
 import org.firstinspires.ftc.robotcore.external.Telemetry
 import dev.frozenmilk.sinister.sdk.apphooks.OnCreateEventLoop
 import dev.frozenmilk.sinister.sdk.opmodes.OpModeScanner
@@ -120,7 +119,6 @@ val hardware: Hardware
  * starts from the Driver Station creates a new chain graph with [chain]; a chained run reuses its
  * predecessor's. [robot] then creates this run's graph inside the chain graph and reads every
  * accessor it declares, so each subsystem exists, and enters its initial state, at INIT; then [setup] runs.
- * A request a subsystem refuses goes to RobotLog and the Driver Station's telemetry log.
  */
 fun <C : Any, R : Robot> program(
     kind: ProgramKind,
@@ -134,10 +132,6 @@ fun <C : Any, R : Robot> program(
 ): FtcProgram {
     val dependencies: FtcScope.() -> R = {
         environment.hardware.requireDevices(config)
-        onRefused { message ->
-            RobotLog.ww("Gum", "%s", message)
-            environment.telemetry.log().add(message)
-        }
         @Suppress("UNCHECKED_CAST")
         val graph = environment.chain as C? ?: chain().also { environment.chain = it }
         robot(graph).also(::readAccessors)

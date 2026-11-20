@@ -136,23 +136,6 @@ class ProgramScope<out E> internal constructor(
      */
     fun onStop(callback: () -> Unit) = register(stopCallbacks, callback)
 
-    /**
-     * Runs when a subsystem refuses a request, with a message that names the subsystem, the
-     * requested state, and the state it was in. FTC hosts log it to RobotLog and telemetry.
-     * Without any callback, Gum prints refusals to standard error, so a refusal is never silent.
-     */
-    fun onRefused(callback: (message: String) -> Unit) {
-        checkConfiguring("Register lifecycle callbacks")
-        refusedCallbacks += callback
-    }
-
-    private val refusedCallbacks = mutableListOf<(String) -> Unit>()
-
-    internal fun refuse(message: String) {
-        if (refusedCallbacks.isEmpty()) System.err.println("Gum: $message")
-        for (callback in refusedCallbacks) callback(message)
-    }
-
     internal fun register(subsystem: Subsystem<*>) {
         subsystems += subsystem
     }

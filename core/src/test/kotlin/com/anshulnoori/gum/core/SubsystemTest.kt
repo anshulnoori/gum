@@ -1,6 +1,8 @@
 package com.anshulnoori.gum.core
 
 import com.pedropathing.ivy.Command
+import com.pedropathing.ivy.commands.Commands.instant
+import com.pedropathing.ivy.commands.Commands.waitUntil
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -56,13 +58,10 @@ class SubsystemTest {
         fun spinUp() = spinTo(3000.0).then(reach(Speed.READY))
     }
 
-    private val refusals = mutableListOf<String>()
-
     private fun <S> session(create: () -> S): Pair<OpModeSession, S> {
         var subsystem: S? = null
         val session = teleop<Unit, S>("Test", dependencies = { create() }) {
             subsystem = it
-            onRefused { refusals += it }
         }.initialize(Unit)
         session.start()
         @Suppress("UNCHECKED_CAST")
@@ -79,7 +78,6 @@ class SubsystemTest {
         session.tick()
         assertEquals(State.EJECTING, roller.state)
         assertEquals(listOf("OFF", "COLLECTING", "EJECTING"), roller.entered, "re-requesting a state does not re-enter it")
-        assertEquals(emptyList(), refusals)
         session.stop()
     }
 
@@ -96,19 +94,17 @@ class SubsystemTest {
     }
 
     @Test
-    fun `a request from a state it does not name is refused and reported`() {
+    fun `a request from a state it does not name leaves the state`() {
         val (session, roller) = session { Roller() }
         roller.collect().schedule()
         roller.ejectFromOff().schedule()
         session.tick()
         assertEquals(State.COLLECTING, roller.state, "eject is valid only from Off")
-        assertEquals(listOf("Roller refused EJECTING: it is COLLECTING, and EJECTING is requested only from OFF"), refusals)
 
         roller.stop().schedule()
         roller.ejectFromOff().schedule()
         session.tick()
         assertEquals(listOf("OFF", "COLLECTING", "OFF", "eject effect", "EJECTING"), roller.entered, "the effect runs only when taken, before entry")
-        assertEquals(1, refusals.size)
         session.stop()
     }
 
@@ -200,6 +196,34 @@ class SubsystemTest {
         session.stop()
         assertEquals(State.OFF, roller.state)
         assertEquals(listOf("OFF", "eject effect", "EJECTING", "OFF"), roller.entered)
+    }
+
+    // Ivy 1.1.1's Scheduler.execute walks a copy of its running commands. When an earlier command
+    // schedules one that interrupts a later one, the loop still reaches the interrupted command; if
+    // it reports done, Ivy ends it again and removes the roller from the command that took it over.
+    @Test
+    fun `an interrupted request never strips the roller from the command that took it over`() {
+        var go = false
+        var down = false
+        lateinit var roller: Roller
+        lateinit var collecting: Command
+        val session = teleop<Unit, Roller>("Teleop", dependencies = { Roller() }) { r ->
+            roller = r
+            collecting = roller.collecting()
+            val scheduler = waitUntil { go }.then(instant { collecting.schedule() })
+            onStart { scheduler.schedule() }
+            Button { down }.onPress { roller.eject().schedule() }
+        }.initialize(Unit)
+        session.start()
+        session.tick()
+        go = true
+        down = true
+        session.tick()
+        assertTrue(collecting.isScheduled, "hold(COLLECTING) took the roller")
+        val stop = roller.stop()
+        stop.schedule()
+        assertFalse(collecting.isScheduled, "stop interrupts hold(COLLECTING), so one command owns the roller")
+        session.stop()
     }
 
     @Test

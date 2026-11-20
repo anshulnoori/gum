@@ -1,6 +1,6 @@
 # Use Ivy commands with KStateMachine subsystems
 
-Status: accepted and implemented; see [lifecycle](../lifecycle.md). Amended by [ADR 0003](0003-gum-owned-subsystems-and-robot.md). This ADR first named kotlinx.coroutines; routines use the standard library's `kotlin.coroutines` instead.
+Status: accepted and implemented; see [lifecycle](../lifecycle.md). Amended by [ADR 0003](0003-gum-owned-subsystems-and-robot.md). This ADR first named kotlinx.coroutines; routines use the standard library's `kotlin.coroutines` instead. Amended by [ADR 0006](0006-plain-ivy-composition.md): routines and operation outcomes are removed, and programs compose with Ivy's groups.
 
 Gum uses Ivy for command composition and whole-group reservations, and KStateMachine for complex subsystem states.
 The user prefers command-first Kotlin interfaces over Mercurial's custom continuation builders or a new Gum scheduling language.
@@ -10,7 +10,7 @@ Gum owns the FTC lifecycle and integration contracts rather than replacing eithe
 
 Subsystems expose ordinary command factories. Gum builds their KStateMachine machines from declared states and transitions; see [ADR 0003](0003-gum-owned-subsystems-and-robot.md).
 The robot loop serializes control-affecting work. Coroutine work does not establish a second actuator owner.
-Ivy's completion and cancellation behavior needs an adapter for operation outcomes and safe shutdown.
+Ivy's completion and cancellation behavior needs an adapter for operation outcomes (reversed by ADR 0006) and safe shutdown.
 
 ## Alternatives
 

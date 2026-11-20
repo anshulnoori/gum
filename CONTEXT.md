@@ -20,7 +20,7 @@ The program body that configures behavior during INIT. Its return does not end t
 A robot mechanism with one owner for its hardware, state, and valid operations.
 
 **Operation**:
-A specific request for a subsystem to perform behavior, with an outcome that belongs to that request.
+A specific request for a subsystem to perform behavior. Whether it succeeded is read from the subsystem's state.
 
 **State**:
 What a subsystem is doing, one at a time, such as Collecting. Not "mode".
@@ -41,16 +41,10 @@ A command that enters a state and keeps running. When it is cancelled or interru
 A command that finishes once a subsystem is in a given state.
 
 **Refused request**:
-A request made from a state it is not valid from. The state stays, and Gum reports it.
-
-**Outcome**:
-How a command ended: finished, interrupted, refused, or timed out. A routine's `await` returns it.
-
-**Timeout**:
-A limit on how long a command runs. When it runs out, the command is ended as interrupted, and its outcome is timed out.
+A request made from a state it is not valid from. The state stays, and Gum reports nothing.
 
 **Routine**:
-A coordinated command or command group, such as scoring followed by parking.
+A coordinated command group built with Ivy's groups, such as scoring followed by parking.
 
 **Reservation**:
 Exclusive scheduled ownership of a subsystem. A command group reserves all participating subsystems for its lifetime.

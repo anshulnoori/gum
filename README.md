@@ -3,7 +3,7 @@
 Gum v2 is a Kotlin-first framework for FIRST Tech Challenge robot programs.
 It connects functional OpModes, lifecycle-scoped dependency injection, controller events, and state-machine subsystems.
 
-**Status: implemented and JVM-tested: the lifecycle, the FTC host as a `LinearOpMode`, Ivy scheduling, KStateMachine subsystems with feedback control, gamepad events from the SDK callback with button combinators and stick and trigger thresholds, coroutine routines, background reads, program chains, hardware configuration from Kotlin with opt-in write caching, a Pedro Pathing drive, Panels telemetry and field drawing, and `debug(program)` entries that show loop and per-phase timing. Implemented but not JVM-tested: the chain-lasting Metro scope and Sloth registration. apex-2026 compiles on it with FTC SDK 12.0. Nothing has run on a robot yet. Routines see command outcomes (finished, interrupted, refused, timed out) and can limit any command with a timeout; faults are not implemented, and no artifact is published.**
+**Status: implemented and JVM-tested: the lifecycle, the FTC host as a `LinearOpMode`, Ivy scheduling, KStateMachine subsystems with feedback control, gamepad events from the SDK callback with button combinators and stick and trigger thresholds, background reads, program chains, hardware configuration from Kotlin with opt-in write caching, a Pedro Pathing drive, Panels telemetry and field drawing, and `debug(program)` entries that show loop and per-phase timing. Implemented but not JVM-tested: the chain-lasting Metro scope and Sloth registration. apex-2026 compiles on it with FTC SDK 12.0. Nothing has run on a robot yet. Programs compose commands with Ivy's groups; faults are not implemented, and no artifact is published.**
 
 This repository starts with independent Git history. The previous implementation remains in [old-gum](https://github.com/anshulnoori/old-gum).
 
@@ -14,7 +14,7 @@ This repository starts with independent Git history. The previous implementation
 - Metro is the compile-time DI. Gum builds subsystem state machines and creates the robot graph at every INIT; see [ADR 0003](docs/adr/0003-gum-owned-subsystems-and-robot.md).
 - OpModes are values whose setup bodies configure behavior. Gum owns execution.
 - Sloth registers programs and supplies development reload.
-- Routines use Kotlin's built-in coroutines inside Ivy's update; slow sensors read on background threads. Only the OpMode thread writes outputs.
+- Programs compose subsystem commands with Ivy's groups; Gum adds no composition API ([ADR 0006](docs/adr/0006-plain-ivy-composition.md)). Slow sensors read on background threads. Only the OpMode thread writes outputs.
 - Gamepad input comes from the SDK's callback, not polling, including combined, debounced, double-press, toggled, and stick or trigger threshold buttons.
 - Pedro Pathing 3 drives through Ivy commands on a Pedro follower; see the `pedro` module. Tuning builds add Pedro's AutoTune through `pedro-tuning`; see [Pedro setup and tuning](docs/pedro.md).
 - Panels shows telemetry, the field, and live-tuned values; Gum sends to it after every update.

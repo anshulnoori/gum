@@ -47,7 +47,7 @@ Record JVM test results separately from Android assembly and device evidence.
 Use one representative mechanism with fake sensor and actuator adapters.
 Confirm the mechanism's real states with the user before encoding them.
 Exercise success, rejected requests, faults, interruption, and persistent holding behavior.
-Require each command to observe its own operation outcome.
+Require each command to observe its own operation outcome (superseded by [ADR 0006](adr/0006-plain-ivy-composition.md): success is read from state).
 
 Validate Ivy reentrant schedule/cancel behavior with its actual dependency.
 Resolve scheduler mutation and cleanup policy before controller callbacks schedule arbitrary work.
@@ -55,10 +55,10 @@ Resolve scheduler mutation and cleanup policy before controller callbacks schedu
 Status: partly implemented with an intake (two motors, states Off, Collecting, Ejecting) in apex-2026.
 Sessions drive Ivy 1.1.1's scheduler: see [Ivy commands](lifecycle.md#ivy-commands).
 Gum's `Subsystem` builds a KStateMachine 0.38.1 machine from an enum of states and an optional `automatic` block; see [subsystems](lifecycle.md#subsystems) and [ADR 0005](adr/0005-requested-and-automatic-transitions.md).
-Named commands request a state and finish once it is entered. A request valid only `from` certain states is refused from any other, and Gum reports the refusal; automatic transitions run after Ivy each update.
+Named commands request a state and finish once it is entered. A request valid only `from` certain states leaves the state alone from any other; automatic transitions run after Ivy each update.
 JVM tests drive real Ivy and KStateMachine, including the intake with fake motors.
 Feedback control is implemented: `during(state)` runs control after automatic transitions, `request(state) { }` sets data in the transition's effect, and `reach(state)` waits for a state; JVM tests drive a flywheel with a fake sensor.
-Outcomes and timeouts are implemented: a routine's `await` returns finished, interrupted, refused, or timed out, and `withTimeout` limits any command; see [outcomes and timeouts](lifecycle.md#outcomes-and-timeouts). Faults and nested states remain.
+Outcomes, timeouts, and routines were implemented, then removed in favor of Ivy's groups and state checks ([ADR 0006](adr/0006-plain-ivy-composition.md)). Faults and nested states remain.
 
 Ivy 1.1.1 reentrancy, observed against the real dependency:
 a command interrupted by a command scheduled during `Scheduler.execute()` still runs `execute()` once more in that pass, after its `end(INTERRUPTED)`.
@@ -96,9 +96,9 @@ Reload changed TeamCode and generated Metro code between sessions.
 Verify the next session uses new classes and retains no old graphs or callbacks.
 Exercise dynamic successor initialization on the selected FTC SDK.
 
-## 6b. Integrate routines, background reads, Pedro, and Panels
+## 6b. Integrate background reads, Pedro, and Panels
 
-Status: routines (coroutines over Ivy), background reads, the Pedro drive, and Panels telemetry and field drawing are implemented and JVM-tested. Panels on a Robot Controller is not yet verified.
+Status: background reads, the Pedro drive, and Panels telemetry and field drawing are implemented and JVM-tested. Panels on a Robot Controller is not yet verified.
 SDK 12 already skips motor and servo writes that repeat the last value exactly, so Gum adds no write cache.
 
 ## 7. Establish the competition baseline

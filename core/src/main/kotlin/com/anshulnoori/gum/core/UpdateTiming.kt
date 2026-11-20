@@ -8,7 +8,7 @@ enum class UpdatePhase(val label: String) {
     /** Applying button changes and running their actions. */
     BUTTONS("Buttons"),
 
-    /** Ivy's `Scheduler.execute`: every running command, including routines. Only after START. */
+    /** Ivy's `Scheduler.execute`: every running command. Only after START. */
     IVY("Ivy"),
 
     /** Every subsystem's `beforeCommands`, automatic transitions, and `during`. Only after START. */

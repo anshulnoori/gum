@@ -35,7 +35,7 @@ A missing subsystem dependency still fails to compile.
 Metro needs Gradle to run on JDK 21 or newer, and TeamCode targets Java 11 because Metro's runtime inlines Java 11 bytecode.
 `hardware` and subsystem registration rely on the OpMode thread; using either elsewhere fails with a message.
 `Subsystem` is a required Gum DSL, which the design previously listed as a non-goal.
-Nested states, timeouts, and operation outcomes extend `Subsystem` when a mechanism needs them.
+Nested states, timeouts, and operation outcomes extend `Subsystem` when a mechanism needs them. [ADR 0006](0006-plain-ivy-composition.md) later removed outcomes and timeouts in favor of Ivy.
 
 ## Alternatives
 

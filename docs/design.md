@@ -27,7 +27,6 @@ The first event date, robot hardware, and performance targets remain unknown.
 | Sloth | Development class reload and registration facilities |
 
 Metro is the DI library. Gum creates the robot graph at every INIT and builds subsystem state machines ([ADR 0003](adr/0003-gum-owned-subsystems-and-robot.md)). KSP is not a requirement.
-Routines use the standard library's `kotlin.coroutines`, resumed by Ivy's update; kotlinx.coroutines is not a dependency, and coroutines are not the control clock.
 Versions are pinned now that apex-2026 compiles and the contracts pass tests; the [README](../README.md#build-and-test) lists them.
 
 ## Program model
@@ -66,9 +65,9 @@ val main = teleop(
 | --- | --- |
 | INIT | Create a fresh graph, resolve required hardware, configure bindings and registered periodic work |
 | INIT updates | Permit explicit initialization behavior; normal driver command bindings remain gated |
-| START | Enable driver bindings and schedule startup routines |
+| START | Enable driver bindings and schedule startup commands |
 | Active updates | Advance control-affecting work on the robot-loop thread |
-| Shutdown | Reject new work, run cleanup callbacks, stop background reads, return subsystems to their initial states, then drop scheduled commands without their `end` (routine `finally` blocks do not run), release graph references |
+| Shutdown | Reject new work, run cleanup callbacks, stop background reads, return subsystems to their initial states, then drop scheduled commands without their `end`, release graph references |
 | Next program INIT | After a started run stops, initialize the program setup ended with; await a separate START |
 
 Homing, vision warmup, and selection menus need explicit initialization behavior.
@@ -107,11 +106,9 @@ KStateMachine evaluates valid transitions and owns ongoing mechanism behavior.
 Entry actions remain short; later sensor updates report physical progress.
 Command completion does not stop continuous holding behavior.
 
-An operation has a request-specific outcome.
-Success, rejection, interruption, timeout, and fault remain distinguishable.
-A state such as Holding is not sufficient proof that a particular movement succeeded.
-A failed step must not advance a success-dependent routine.
-Routines see outcomes: `await` returns finished, interrupted, refused, or timed out, and `withTimeout` limits any command. Faults, and outcomes through Ivy's own groups, remain to be implemented.
+Commands do not report outcomes, and Gum does not log requests that `from` does not allow ([ADR 0006](adr/0006-plain-ivy-composition.md)).
+A step that needs an earlier one to succeed checks subsystem state, such as with Ivy's `conditional`; a team that wants a log of skipped requests writes it.
+Faults are not modeled.
 
 ## Reservations and cancellation
 
@@ -120,7 +117,7 @@ This includes resources used only by later sequential steps.
 Reservations prevent competing scheduled owners, not direct hardware writes.
 Hardware remains private to subsystem implementations. One exception: `PedroDrive.follower` is public, so code can command the follower without reserving the drive.
 
-Parallel children with overlapping requirements must be rejected. Gum has no composition interface of its own besides `routine`; teams compose with Ivy's groups, and the rejection is not implemented yet.
+Parallel children with overlapping requirements must be rejected. Gum has no composition interface of its own; teams compose with Ivy's groups, and the rejection is not implemented yet.
 Sequential children can share requirements.
 Raw Ivy interoperability needs a documented validation policy; Gum cannot silently promise checks on code that bypasses it.
 
@@ -141,7 +138,6 @@ Each active update applies button changes and runs their actions, runs `Schedule
 That order must avoid stale completion observations and conflicting output owners.
 
 Optional background work returns timestamped data. It does not write motors independently.
-Routines belong to the session. Shutdown drops them without running their `finally` blocks, because Ivy's reset calls no `end`.
 KStateMachine integration must follow its threading and event-processing contracts.
 Neither parallel state regions nor Ivy parallel groups require simultaneous execution on different threads.
 
@@ -175,7 +171,7 @@ Research is not permission to run development services during matches.
 
 - First event date, robot hardware, team workflow, and measurable reliability targets
 - Reentrant schedule/cancel policy for commands scheduled inside Ivy's update. The [implementation plan](implementation-plan.md) records Ivy 1.1.1's behavior. Gum's own commands report done only until they end, so Ivy does not end them twice; a policy for raw Ivy commands remains.
-- Fault outcomes, and outcome propagation through Ivy's own groups (conflicts use Ivy's priority and `ConflictBehavior`)
+- Fault handling (conflicts use Ivy's priority and `ConflictBehavior`)
 - State-machine topology for coordinated mechanisms
 
 Settled since this list was written:
