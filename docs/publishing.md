@@ -9,13 +9,9 @@ Gum's library modules and its Gradle plugin publish to a Maven repository with G
 | `:core` | `com.anshulnoori.gum:core` | jar |
 | `:hardware` | `com.anshulnoori.gum:hardware` | jar |
 | `:ftc` | `com.anshulnoori.gum:ftc` | aar |
-| `:pedro` | `com.anshulnoori.gum:pedro` | aar |
-| `:pedro-tuning` | `com.anshulnoori.gum:pedro-tuning` | aar |
 | `gradle-plugin/` | `com.anshulnoori.gum:gum-gradle-plugin`, plugin ID `com.anshulnoori.gum.hardware` | jar |
 
 Each artifact comes with a sources jar, a POM, and Gradle module metadata. The POM names the MIT license, the GitHub repository as SCM, and the developer. Modules depend on each other by these coordinates, so a consumer only declares the modules it uses directly.
-
-`pedro-tuning` also contains procedures copied from Pedro Pathing's Quickstart, which keep FIRST's BSD license. Its POM lists that license next to MIT, and its AAR and sources jar carry [`NOTICE.md`](../pedro-tuning/NOTICE.md) at `META-INF/gum-pedro-tuning/NOTICE.md`. An app that ships `pedro-tuning` must reproduce that notice with the app, as the license requires.
 
 The Gradle plugin also publishes a plugin marker, `com.anshulnoori.gum.hardware:com.anshulnoori.gum.hardware.gradle.plugin`, which lets Gradle find the plugin by its ID. Its group is the plugin ID, so a repository filter must allow `com.anshulnoori.gum` and the groups under it.
 
@@ -95,7 +91,6 @@ repositories {
 
 dependencies {
     implementation 'com.anshulnoori.gum:ftc:0.1.0'
-    implementation 'com.anshulnoori.gum:pedro:0.1.0'
 }
 ```
 

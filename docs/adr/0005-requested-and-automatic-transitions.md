@@ -18,7 +18,7 @@ Ivy requirements stay the ownership model. Automatic transitions are not command
 ## Consequences
 
 A student cannot turn every request into a silent no-op by declaring one automatic rule, which the old `transitions` block did.
-PedroDrive mirrors the follower with `anyState` automatic transitions and has no requested transitions.
+PedroDrive mirrored the follower with `anyState` automatic transitions and had no requested transitions. It was later removed; Pedro is now a TeamCode integration ([lifecycle](../lifecycle.md#using-pedro)).
 Programs that called `hold(mode)` directly now call a named hold command.
 
 ## Alternatives

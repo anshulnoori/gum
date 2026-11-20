@@ -255,26 +255,15 @@ interface RobotGraph : Robot {
 `@SingleIn(OpModeScope::class)` gives each run one intake. Metro uses a constructor default when the graph has no binding for that parameter. `Robot` supplies `battery`.
 Each INIT reads every accessor `RobotGraph` declares before setup runs, so every subsystem exists, and enters its initial state, during INIT, even one a program first uses after START.
 
-## Pedro Pathing
+## Using Pedro
 
-The `pedro` module makes a Pedro Pathing 3 `Follower` a Gum subsystem, the drivetrain's one owner:
+Gum has no Pedro Pathing module. Pedro is an optional integration that TeamCode sets up the way Pedro's own docs do, and Gum runs Pedro's Ivy commands like any other command:
 
-```kotlin
-@Inject
-@SingleIn(OpModeScope::class)
-class Drive(follower: Follower = PedroConstants.ROBOT.follower(hardware.map)) : PedroDrive(follower)
-
-val main = teleop("Main") { robot ->
-    onStart { robot.drive.drive({ -gamepad1.leftStickY }, { -gamepad1.leftStickX }, { -gamepad1.rightStickX }).schedule() }
-}
-```
-
-- Gum updates the follower in `beforeCommands`, every update after START, before button actions and commands, as Pedro's docs do. Commands decide from that update's pose, and what they set reaches the drivetrain on the next update. `state` mirrors the follower's mode through automatic transitions: `IDLE`, `FOLLOWING`, `HOLDING`, or `DRIVER`.
-- `follow(path)`, `hold(pose)`, `holdHere()`, and `drive(...)` reserve the drive, so a newer drive command interrupts an older one. `drive(...)` reads its suppliers every update.
-- `drive(...)` is the drive's default command: it runs at the lowest priority, Ivy suspends it while another drive command runs and resumes it afterward, and if it is scheduled while one runs, it waits. Cancelling it stops the drivetrain. A `follow(path)` that ends before its path does holds the pose the robot is at; one that finishes holds the path's end pose.
-- `hold(pose)` and `holdHere()` hold until cancelled or interrupted, so the stick drive stays suspended while they run and resumes after. They never finish by themselves: in a routine, limit them with `withTimeout`, as in `await(robot.drive.hold(pose).withTimeout(0.5))`, which returns `TIMED_OUT`. The follower keeps holding after they end.
-- STOP stops the drivetrain. Pedro's device names should come from `RobotMap`, for example `RobotMap.frontLeft.name`. [Pedro setup and tuning](pedro.md) covers `PedroConstants`, `PedroRobot`, and tuning builds.
-- After START, it draws the robot and the path it follows on the Panels field, in Pedro's coordinates. It draws on updates when the field's `shouldUpdateCanvas` is true, which it checks before Gum sends the field, so some sent frames lack the robot.
+- TeamCode depends on `com.pedropathing:revhub` and keeps Pedro's configs in its own constants file, with device names taken from `RobotMap`, such as `RobotMap.frontLeft.name`, so the generated configuration and the INIT device check cover Pedro's devices.
+- TeamCode's robot graph provides one `Follower` per INIT with a Metro `@Provides @SingleIn(OpModeScope::class)` function built from `hardware.map`. Subsystems that need the follower take it as a constructor parameter.
+- A TeamCode drive subsystem updates the follower in `beforeCommands`, before commands run, as Pedro's docs do, and stops the drivetrain at STOP. STOP returns a subsystem to its initial state only from another state, so the drive tracks whether the follower is moving with two states and automatic transitions.
+- Follower commands require the follower, so Ivy gives the drivetrain one owner. A stick drive runs as a low-priority command that Ivy suspends: `.setPriority(Int.MIN_VALUE).setInterruptedBehavior(InterruptedBehavior.SUSPEND)`.
+- Tuning uses Pedro's AutoTune and its `@Tuner` methods, in a TeamCode source set that only tuning builds include, because AutoTune serves a web page whenever it is installed.
 
 ## Panels
 

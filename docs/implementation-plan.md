@@ -96,9 +96,9 @@ Reload changed TeamCode and generated Metro code between sessions.
 Verify the next session uses new classes and retains no old graphs or callbacks.
 Exercise dynamic successor initialization on the selected FTC SDK.
 
-## 6b. Integrate background reads, Pedro, and Panels
+## 6b. Integrate background reads and Panels
 
-Status: background reads, the Pedro drive, and Panels telemetry and field drawing are implemented and JVM-tested. Panels on a Robot Controller is not yet verified.
+Status: background reads and Panels telemetry and field drawing are implemented and JVM-tested. Panels on a Robot Controller is not yet verified.
 SDK 12 already skips motor and servo writes that repeat the last value exactly, so Gum adds no write cache.
 
 ## 7. Establish the competition baseline

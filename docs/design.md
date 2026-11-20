@@ -115,7 +115,7 @@ Faults are not modeled.
 A group reserves the union of its child requirements for its entire lifetime.
 This includes resources used only by later sequential steps.
 Reservations prevent competing scheduled owners, not direct hardware writes.
-Hardware remains private to subsystem implementations. One exception: `PedroDrive.follower` is public, so code can command the follower without reserving the drive.
+Hardware remains private to subsystem implementations.
 
 Parallel children with overlapping requirements must be rejected. Gum has no composition interface of its own; teams compose with Ivy's groups, and the rejection is not implemented yet.
 Sequential children can share requirements.
@@ -178,7 +178,7 @@ Settled since this list was written:
 
 - Compatible FTC/Kotlin/Gradle/Metro/Sloth/Ivy/KStateMachine versions: pinned; see the [README](../README.md#build-and-test).
 - Public lifecycle test interfaces and the dependency/cleanup contract: see [lifecycle contracts](lifecycle.md#contracts).
-- Motion/localization integration and its single update owner: `PedroDrive` owns the Pedro follower, and Gum updates it once per update ([lifecycle](lifecycle.md#pedro-pathing)).
+- Motion/localization integration and its single update owner: Pedro is a TeamCode integration; TeamCode's drive subsystem updates the follower once per update, and follower commands require the follower ([lifecycle](lifecycle.md#using-pedro)).
 - Registration metadata and transition payload interface: `ProgramMetadata` registers through Sloth ([FTC host](lifecycle.md#ftc-host)), and a request's effect sets the data a state uses ([subsystems](lifecycle.md#subsystems)).
 
 The implementation plan resolves these through small executable examples rather than additional speculative framework layers.

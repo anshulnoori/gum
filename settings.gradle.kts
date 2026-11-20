@@ -26,5 +26,3 @@ rootProject.name = "gum"
 include(":core")
 include(":ftc")
 include(":hardware")
-include(":pedro")
-include(":pedro-tuning")
