@@ -1,6 +1,6 @@
 # Programs chain by return value; Ivy requirements stay the ownership model
 
-Status: accepted. Amended by [ADR 0006](0006-plain-ivy-composition.md): routines are removed, so read "routine" below as an Ivy group, which reserves its children's requirements.
+Status: accepted. Amended by [ADR 0006](0006-plain-ivy-composition.md): routines are removed, so read "routine" below as an Ivy group, which reserves its children's requirements. Amended by [ADR 0007](0007-subsystems-made-of-regions.md): commands reserve a subsystem's region, not the whole subsystem.
 
 ## Decision
 

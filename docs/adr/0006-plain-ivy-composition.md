@@ -15,7 +15,7 @@ Gum does not rebuild what Ivy already provides.
 ## Consequences
 
 apex-2025's programs need none of the removed pieces: its autos are timed sequences, and its waits check sensor state.
-`lazy { }` reserves nothing by itself, so a lazily built command that uses a subsystem adds `.requiring(...)`.
+`lazy { }` reserves nothing by itself, so a lazily built command that uses a subsystem adds `.requiring(...)` for the regions it uses ([ADR 0007](0007-subsystems-made-of-regions.md)).
 Ivy's group bugs, such as a cancelled `Sequential` ending steps that never started, now reach programs directly; they are fixed upstream in Ivy, not in Gum.
 The double-end guards in `request`, `hold`, and `reach` stay until Gum builds against an Ivy release with Ivy#10.
 

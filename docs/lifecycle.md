@@ -97,7 +97,7 @@ The Gum Gradle plugin generates a Metro graph for `ChainScope` that each run's `
 
 In FTC, the host queues the next program when the SDK's stop OpMode initializes, after the run has stopped. The SDK stops a run in one of two orders: Driver Station STOP queues the stop OpMode and then stops the run, while `requestOpModeStop`, a `runOpMode` that returns, and app teardown stop the run and then queue the stop OpMode over anything queued during the stop. Queuing the next program when the stop OpMode initializes works for both.
 
-Status: the core contract is JVM-tested, and so is the host's handoff for both stop orders, by replaying the SDK's calls. Chain-graph reuse is not tested. Chaining has not run on a Control Hub.
+Status: the core contract is JVM-tested, and so is the host's handoff for both stop orders, by replaying the SDK's calls. Chain-graph reuse is not tested, nor is taking over and restoring the Driver Station entry, which the tests replace. Chaining has not run on a Control Hub.
 
 ## Ivy commands
 
@@ -139,6 +139,7 @@ class Intake(
 - Named commands are a subsystem's whole API. `request`, `hold`, and `reach` are protected, so programs call `intake.collect()`, not `intake.rollers.request(...)`. Programs read a region's state, as in `intake.rollers.state`.
 - `request(state)` is an Ivy command that reserves the region, transitions it to `state`, and finishes at once. Any state can be requested from any other.
 - `request(state, from = ...)` is valid only from the named state, or from a set of states. `guard = { ... }` refuses the request when it returns false, and can read other regions. A refused request leaves the state, runs no effect, and reports nothing; a team that wants a log checks the state itself. Requesting a state the region is already in runs its effect, if the guard allows it.
+- `onEntry` sets outputs and must be safe to repeat: Gum also reruns it, outermost state first, when a hub that lost its outputs reconnects. A request it makes then waits until every region has been reapplied.
 - `onEntry` runs on every entry, including the initial state, which each region enters at INIT, after setup. A subsystem created later enters it on its first update.
 - STOP returns each region to its initial state, whatever its commands allow.
   This resets the region's state, not the mechanism: by the time Gum cleans up, the SDK has fail-safed every hub and drops nonzero motor powers and velocities, target positions, and every servo write until the next OpMode initializes (`LynxModule.sendCommand`, `OpModeManagerImpl.callActiveOpModeStop`). An initial state's `onEntry` can still set motor power 0 and change modes. When `runOpMode` ends by throwing, the SDK has not blocked writes, so cleanup reaches the hardware.
@@ -167,7 +168,7 @@ class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Sub
 }
 ```
 
-- `automatic { A to B whenever { condition } }` declares a transition the region takes by itself; `anyState to B` starts from any other state. Each update, after commands, Gum takes the first declared transition whose source the region is in and whose condition is true. Declaration order decides between matches, and Gum takes at most one automatic transition per region per update.
+- `automatic { A to B whenever { condition } }` declares a transition the region takes by itself; `anyState to B` starts from any other state. Each update, after commands, Gum takes the first declared transition whose source the region is in, whose target it is not in, and whose condition is true. Declaration order decides between matches, and Gum takes at most one automatic transition per region per update.
 - Conditions must only read, and can read other regions: Gum may evaluate any of them on any update. An automatic transition without `whenever` fails when the subsystem is created.
 - Automatic transitions are not commands and take no requirement. Commands cannot request them.
 - `effect { }` runs when its transition is taken, before the old state's `onExit` and the target's `onEntry`. On `request(state) { }` the block is the effect: it runs only when the transition is taken. Requesting the current state runs the effect without re-entering, so a new target takes effect.
@@ -187,13 +188,13 @@ class IntakeArm(
     private val servo: Servo = hardware(RobotMap.armServo),
     private val motor: DcMotorEx = hardware(RobotMap.roller),
 ) : Subsystem() {
-    enum class Arm(val position: Double, override val parent: Arm? = null) : Nested<Arm> {
-        LOWERED(0.1), RAISED(0.8), RAISED_LOW(0.6, RAISED), RAISED_HIGH(0.9, RAISED)
+    enum class Arm(val position: Double?, override val parent: Arm? = null) : Nested<Arm> {
+        LOWERED(0.1), RAISED(null), RAISED_LOW(0.6, RAISED), RAISED_HIGH(0.9, RAISED)
     }
     enum class Roller(val power: Double) { STOPPED(0.0), SPINNING(1.0) }
 
     val arm = region(Arm.LOWERED, history = History.SHALLOW) {
-        onEntry { servo.position = it.position }
+        onEntry { state -> state.position?.let { servo.position = it } }   // a parent has no position of its own
     }
     val roller = region(Roller.STOPPED) {
         onEntry { motor.power = it.power }
@@ -211,8 +212,47 @@ class IntakeArm(
 - Each region is its own Ivy requirement. A command for the arm and one for the roller run at the same time; a command for one region interrupts only that region's command. A group of commands for both, such as `stow`, requires both.
 - Rules between regions are guards and automatic transitions that read the other region.
 - A state enum that implements `Nested` can give a state a `parent`, declared before it. A region is always in a state without children; requesting a parent enters its first child, or the child on the way to the region's initial state. `isIn(parent)` is true in any state inside it, and `state` names the innermost state. A parent's `onEntry` runs before its child's, and its `onExit` after; moving between two children of one parent leaves the parent entered.
-- `from`, `reach`, `hold`, and automatic transitions on a parent cover every state inside it. Requesting a parent the region is already in changes nothing.
+- `from`, `reach`, `hold`, and automatic transitions on a parent cover every state inside it. Requesting a parent the region is already in changes no state; its effect runs if the guard allows it.
 - `history = History.SHALLOW` makes requesting a parent return to the child the region was last in; `History.DEEP` returns to the innermost state it was last in. The default, `History.NONE`, enters the first child every time.
+
+## Controller events
+
+```kotlin
+val main = teleop("Main") { robot ->
+    var alliance = Alliance.BLUE
+    initLoop {
+        if (gamepad1.dpadUp.wasPressed) alliance = Alliance.BLUE
+        if (gamepad1.dpadDown.wasPressed) alliance = Alliance.RED
+    }
+    gamepad1.rightBumper.whileHeld { robot.intake.collecting() }
+    gamepad1.circle.onPress { robot.intake.stop().schedule() }
+    gamepad1.above(Axis.RIGHT_TRIGGER, 0.5).whileHeld { robot.intake.ejecting() }
+    (gamepad1.leftBumper and gamepad1.dpadLeft).onPress { robot.lift.climb().schedule() }
+    gamepad1.triangle.doublePress(0.3).onPress { robot.lift.stow().schedule() }
+    gamepad2.a.toggleOnPress { robot.flywheel.spinning() }
+    val slow = gamepad1.leftStickButton.toggled()
+    loop { telemetry.addData("Slow mode", slow.isDown) }
+}
+```
+
+- Gamepad buttons change from the SDK's gamepad callback, not by polling. The callback runs on the SDK's event loop thread; Gum queues each change and applies them on the OpMode thread at the start of the next update, in arrival order, so a tap between updates still presses and releases.
+  The queue is a JCTools multi-producer, single-consumer circular buffer (`MpscAtomicArrayQueue`, 256 changes) of preallocated changes, so a button change allocates nothing. The event loop thread and the OpMode thread may both post. If the OpMode thread stalls long enough to fill it, the next update sets each button to its latest reported state; only taps in between are lost.
+- `isDown`, `wasPressed`, and `wasReleased` describe the latest update, in INIT and after START, so INIT code polls them.
+- `onPress` and `onRelease` actions run only after START, before Ivy advances, so a command they schedule starts and runs in that update. Bind them during setup.
+- A button held through START, or down when first used, presses only after a release.
+- `whileHeld { command }` schedules a fresh command on press and cancels it on release. A region's hold command, built with `hold(state)`, enters `state`, keeps running, and returns the region to its initial state when cancelled or interrupted, so a newer hold on the same region takes over. A hold set to `InterruptedBehavior.SUSPEND` keeps its state's place instead: when Ivy resumes it, it takes its state back on the next update. If an automatic transition leaves `state`, or its `from` or `guard` refuses the request, the hold ends and leaves the state alone.
+- STOP from an action skips the remaining actions.
+- Programs use `gamepad1`, `gamepad2`, `telemetry`, and `hardwareMap` directly. The gamepads are `Controller`s: every SDK button as a `Button` (PlayStation and Xbox names are the same button), sticks and triggers as `Double`, and `raw` for the SDK gamepad. Sticks and triggers also come from the SDK's callback: each update reads the newest packet that arrived before it started. `raw` is copied on another thread, so values read from it can mix two packets.
+- `Button { condition }` checks a condition at the start of each update, for inputs with no events, such as a sensor threshold. Hub sensors have no SDK callbacks; they change when Gum bulk-reads the hubs, once per update.
+- `above(axis, threshold)`, `below(axis, threshold)`, and `between(axis, low, high)` on a `Controller` turn a stick or trigger (`Axis.LEFT_STICK_X` through `Axis.RIGHT_TRIGGER`) into a `Button` that changes from the SDK's callback like any other button, so a trigger pull is an event, not a poll. `above` and `below` are strict; `between` is inclusive. Stick Y is positive down, as in the SDK. The SDK reports axes as `Float`, so a value equal to a `Double` threshold such as 0.2 can land on either side of it.
+- Derived buttons change as their sources change, in the same update and in arrival order, so a tap between updates still counts. They are ordinary `Button`s: every binding and every combinator works on them, and they can be chained, such as `gamepad1.a.debounce(0.05).doublePress(0.3)`.
+  - `a and b`, `a or b`, and `!a` combine buttons, including buttons from both gamepads and condition buttons. `(!a).onPress { }` runs when `a` is released.
+  - `debounce(pressSeconds, releaseSeconds = 0.0)` goes down once its source has stayed down for `pressSeconds`, and up once it has stayed up for `releaseSeconds`. A change that reverses first is ignored. Each update first applies debounce times that have run out, then the changes that arrived since the last update.
+  - `multiPress(presses, windowSeconds)` goes down at the last of `presses` presses within `windowSeconds` of the first, and up at the next release; `doublePress(windowSeconds)` is two presses. The next press starts a new count. The source's own actions still run at every press.
+  - `toggled(down = false)` flips at each press of its source, for a latched setting read with `isDown`.
+  - Times count from the start of the update that applies each change, so they are accurate to one update.
+  - A derived button starts in the state its sources give it, so a source held at creation or through START does not press it. It cannot `post`.
+- `toggleOnPress { command }` schedules a fresh command at a press and cancels it at the next one. If the command has ended by then, the press schedules a fresh one.
 
 ## Composing commands
 
@@ -227,7 +267,7 @@ val score = robot.intake.collect()
 
 - `then`, `with`, `raceWith`, `until`, `sequential`, `parallel`, `race`, `deadline`, `conditional`, `match`, `repeat`, `loop`, and `lazy` come from Ivy, with Ivy's requirements: a group reserves everything its children reserve.
 - Whether a step succeeded is read from state, not from the command: a request `from` states that do not include the current one leaves the state as it is, and a `reach` that has not arrived leaves the subsystem short of its state.
-- `lazy { }` builds its command when it starts, so it reserves nothing by itself; add `.requiring(...)` for the subsystems it uses.
+- `lazy { }` builds its command when it starts, so it reserves nothing by itself; add `.requiring(...)` for the regions it uses, such as `.requiring(robot.intake.rollers)`.
 - Ivy has no timeout decorator. `cmd.raceWith(waitMs(ms))` limits a command; a team that wants a name for it can write one line: `fun Command.timeout(ms: Double) = raceWith(waitMs(ms))`.
 
 ## Background reads
@@ -309,7 +349,7 @@ Gum phases (ms) : Input 0.02, Buttons 0.01, Ivy 0.30, Subsystems 3.10, Program 0
 ```
 
 - The loop line is the time from the start of one update to the start of the next: its average and maximum over the last second, and updates per second.
-- The phases line is the average time per update in each phase, in the order they run: Input (clearing the bulk cache and taking the newest gamepad packet), Buttons, Ivy (`Scheduler.execute`), Subsystems (`beforeCommands`, which runs before Buttons, then automatic transitions and `during`), Program (the program's `initLoop`, `onStart`, or `loop` callbacks), Telemetry (sending to the Driver Station), and Panels. Other is the time outside every phase, such as the SDK's own checks between updates and adding these two lines.
+- The phases line is the average time per update in each phase, in the order they run: Input (clearing the bulk cache, checking for a hub that reconnected and reapplying outputs if one did, and taking the newest gamepad packet), Buttons, Ivy (`Scheduler.execute`), Subsystems (`beforeCommands`, which runs before Buttons, then automatic transitions and `during`), Program (the program's `initLoop`, `onStart`, or `loop` callbacks), Telemetry (sending to the Driver Station), and Panels. Other is the time outside every phase, such as the SDK's own checks between updates and adding these two lines.
 - A hub's bulk read happens at the first hardware read after the cache clears, so its time counts in the phase that reads first, usually Subsystems.
 - Ivy and Subsystems run only after START, so they show 0.00 in INIT. The first second after START also includes the last INIT updates and the START update. Nothing shows until the first second has passed.
 - Gum reads the clock once per phase and adds to fixed counters, so timing allocates nothing per update. It formats the two lines once per second; each update adds the same two strings again.
@@ -324,7 +364,7 @@ Status: JVM-tested. Not yet run on a Control Hub; the figures above are an illus
 The generated `teleop`, `autonomous`, and `utility` builders give setup the session's robot graph and an `FtcEnvironment`:
 the session's `hardware`, `hardwareMap`, `telemetry`, `gamepad1`, and `gamepad2`.
 
-Gum registers every public top-level program in the `org.firstinspires.ftc.teamcode` package; TeamCode has no registration code.
+Gum registers every public program in TeamCode: a public top-level `val`, or a public property of an `object`, in any package; TeamCode has no registration code.
 `GumProgramScanner` is a Sloth `OpModeScanner`. Sloth runs it when the Robot Controller app starts and after each hot reload (`./gradlew :TeamCode:deploySloth`), replacing the previous registrations.
 Make a program `private` to hide it from the Driver Station.
 

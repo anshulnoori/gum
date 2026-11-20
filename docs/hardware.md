@@ -62,20 +62,20 @@ Changing the direction, run mode, velocity, motor enable, servo range, or PWM se
 The wrapper lasts for the session, and servo wrappers keep the SDK's `PwmControl`.
 When a hub stops responding and comes back, such as after a power loss, Gum forgets every cached value so the next writes go through.
 
-The default tolerance is 0: Gum returns the SDK device itself, which already skips a write equal to the last one.
+The default tolerance is 0: Gum returns the SDK device itself, which already skips a write equal to the last one sent less than 500 ms ago.
 Only writes through `hardware(...)` are cached; a library that finds the device by name in `hardware.map`, such as Pedro, writes to the SDK device directly.
 Motor velocity and target position are not cached.
 A tolerance below 0 or not a number fails the build.
 
 ## Build
 
-Apply `com.anshulnoori.gum.hardware` to the FTC app module after `com.android.application`. For each variant it:
+Apply `com.anshulnoori.gum.hardware` to the FTC app module after `com.android.application`. It:
 
-1. Compiles `src/hardware/kotlin` on the build machine with `kotlin-compiler-embeddable`.
-2. Runs Gum's generator, which writes `res/xml/<name>.xml`, a Java class with an `@OnCreate` hook, and `GumPrograms.kt`: `teleop`, `autonomous`, and `utility` in the config object's package, typed to the `RobotGraph` there.
+1. Compiles `src/hardware/kotlin` once per project on the build machine, with the `kotlin-compiler-embeddable` of the app's Kotlin version.
+2. For each variant, runs Gum's generator, which writes `res/xml/<name>.xml`, a Java class with an `@OnCreate` hook, and `GumPrograms.kt`: `teleop`, `autonomous`, and `utility` in the config object's package, typed to the `RobotGraph` there.
 3. Adds `src/hardware/kotlin` to the app's `main` sources.
 
-The generator writes the format the FTC SDK 12.0 writes: a `LynxUsbDevice` with serial number `(embedded)` and parent module address 173, one `LynxModule` per hub, and device tags from the SDK's device annotations.
+The generator writes the format the FTC SDK 12.0 writes: a `LynxUsbDevice` with serial number `(embedded)` and parent module address 173, one `LynxModule` per Control or Expansion Hub and one `ServoHub` per Servo Hub, and device tags from the SDK's device annotations.
 USB devices follow the `LynxUsbDevice`, directly under `<Robot>`: a `Webcam` with its serial number, and an `EthernetDevice` with the Limelight's `ipAddress`, which the SDK passes to `Limelight3A`. The SDK names a scanned Limelight after the hub's own address on that link; Gum uses the Limelight's address, because the SDK only uses that serial number to name the device.
 
 ## Activation

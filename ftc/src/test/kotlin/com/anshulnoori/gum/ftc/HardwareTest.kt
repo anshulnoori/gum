@@ -7,6 +7,7 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple
 import com.qualcomm.robotcore.hardware.HardwareMap
 import com.qualcomm.robotcore.hardware.PwmControl
 import com.qualcomm.robotcore.hardware.Servo
+import com.qualcomm.robotcore.hardware.VoltageSensor
 import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -98,5 +99,22 @@ class HardwareTest {
         } finally {
             RobotConfigActivation.installedWiring = installed
         }
+    }
+
+    @Test
+    fun `the battery is the Control Hub's voltage sensor, not a Servo Hub's`() {
+        val sensors = listOf("Servo Hub 4", "Expansion Hub 2", "Control Hub", "Servo Hub 5").associateWith {
+            lateinit var sensor: VoltageSensor
+            sensor = Proxy.newProxyInstance(javaClass.classLoader, arrayOf(VoltageSensor::class.java)) { _, method, args ->
+                when (method.name) {
+                    "hashCode" -> System.identityHashCode(sensor)
+                    "equals" -> args!![0] === sensor
+                    else -> null
+                }
+            } as VoltageSensor
+            sensor
+        }
+        val map = HardwareMap(null, null).apply { sensors.forEach { (name, sensor) -> voltageSensor.put(name, sensor) } }
+        assertSame(sensors["Control Hub"], Hardware(map).battery)
     }
 }

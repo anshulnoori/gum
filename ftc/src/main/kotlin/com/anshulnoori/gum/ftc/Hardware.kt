@@ -51,8 +51,18 @@ class Hardware internal constructor(
     @JvmName("limelight") operator fun invoke(device: Device<Role.Limelight>): Limelight3A = lookup(device)
     @JvmName("webcam") operator fun invoke(device: Device<Role.Webcam>): WebcamName = lookup(device)
 
-    /** The main battery, which every configuration has without declaring it. */
-    val battery: VoltageSensor get() = map.voltageSensor.iterator().next()
+    /**
+     * The main battery, read by the Control Hub, which every configuration has without declaring it.
+     * The SDK gives every module a voltage sensor, a Servo Hub included, and keeps them unordered.
+     */
+    val battery: VoltageSensor by lazy {
+        map.voltageSensor.entrySet().firstOrNull { it.key == CONTROL_HUB }?.value ?: map.voltageSensor.iterator().next()
+    }
+
+    private companion object {
+        /** The Control Hub's name in every configuration Gum generates. */
+        const val CONTROL_HUB = "Control Hub"
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun <T> lookup(device: Device<*>): T = map.get(sdkType(device.role), device.name) as T

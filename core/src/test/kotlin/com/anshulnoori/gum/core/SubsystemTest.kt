@@ -364,15 +364,19 @@ class SubsystemTest {
     }
 
     /** An intake arm: the arm and the roller are regions, so their states combine. */
-    private class IntakeArm(history: History = History.NONE) : Subsystem() {
+    private class IntakeArm(history: History = History.NONE, initial: Arm = Arm.LOWERED) : Subsystem() {
         enum class Arm(override val parent: Arm? = null) : Nested<Arm> {
             LOWERED, RAISED, RAISED_LOW(RAISED), RAISED_HIGH(RAISED)
         }
         enum class Roller { STOPPED, SPINNING }
 
         val events = mutableListOf<String>()
-        val arm = region(Arm.LOWERED, history) {
-            onEntry { events += "enter $it" }
+        var lowerOnRaised = false
+        val arm = region(initial, history) {
+            onEntry {
+                events += "enter $it"
+                if (lowerOnRaised && it == Arm.RAISED) lower().schedule()
+            }
             onExit { events += "exit $it" }
         }
         val roller = region(Roller.STOPPED) {
@@ -383,10 +387,11 @@ class SubsystemTest {
         fun raise() = arm.request(Arm.RAISED)
         fun raiseLow() = arm.request(Arm.RAISED_LOW)
         fun raiseHigh() = arm.request(Arm.RAISED_HIGH)
-        fun lower() = arm.request(Arm.LOWERED)
+        fun lower(): Command = arm.request(Arm.LOWERED)
         fun collect() = roller.request(Roller.SPINNING, guard = { arm.isIn(Arm.LOWERED) })
         fun spin() = roller.request(Roller.SPINNING)
         fun armUp() = arm.hold(Arm.RAISED)
+        fun armHigh() = arm.hold(Arm.RAISED_HIGH)
         fun reachRaised() = arm.reach(Arm.RAISED)
     }
 
@@ -461,6 +466,86 @@ class SubsystemTest {
         intake.events.clear()
         session.reapplyOutputs()
         assertEquals(listOf("enter RAISED", "enter RAISED_HIGH", "roller STOPPED"), intake.events)
+        session.stop()
+    }
+
+    enum class Claw { OPEN, CLOSED }
+    enum class Gate { CLOSED, OPEN }
+
+    @Test
+    fun `regions can share an enum and state names`() {
+        class Claws : Subsystem() {
+            val left = region(Claw.OPEN)
+            val right = region(Claw.OPEN)
+            val gate = region(Gate.CLOSED)
+            fun closeLeft() = left.request(Claw.CLOSED)
+            fun openGate() = gate.request(Gate.OPEN)
+        }
+        val (session, claws) = session { Claws() }
+        claws.closeLeft().schedule()
+        claws.openGate().schedule()
+        assertEquals(listOf(Claw.CLOSED, Claw.OPEN, Gate.OPEN), listOf(claws.left.state, claws.right.state, claws.gate.state))
+        session.stop()
+    }
+
+    enum class Lift(override val parent: Lift? = null) : Nested<Lift> {
+        DOWN, UP, SCORING(UP), LOW(SCORING), HIGH(SCORING)
+    }
+
+    @Test
+    fun `deep history returns to the innermost state, even after a move between grandchildren`() {
+        class Lifter : Subsystem() {
+            val lift = region(Lift.DOWN, History.DEEP)
+            fun go(state: Lift) = lift.request(state)
+        }
+        val (session, lifter) = session { Lifter() }
+        lifter.go(Lift.HIGH).schedule()
+        lifter.go(Lift.LOW).schedule()
+        lifter.go(Lift.DOWN).schedule()
+        lifter.go(Lift.UP).schedule()
+        assertEquals(Lift.LOW, lifter.lift.state)
+        session.stop()
+    }
+
+    @Test
+    fun `cancelling a suspended hold leaves the region to the command that took it`() {
+        val (session, roller) = session { Roller() }
+        val collecting = (roller.collecting() as CommandBuilder).setInterruptedBehavior(InterruptedBehavior.SUSPEND)
+        collecting.schedule()
+        session.tick()
+        roller.eject().then(waitUntil { false }).schedule()
+        session.tick()
+        collecting.cancel()
+        assertEquals(State.EJECTING, roller.state)
+        session.stop()
+    }
+
+    @Test
+    fun `releasing a hold and STOP return to the initial state itself, not to where history points`() {
+        val (session, intake) = session { IntakeArm(History.SHALLOW, initial = IntakeArm.Arm.RAISED) }
+        assertEquals(IntakeArm.Arm.RAISED_LOW, intake.arm.state, "an initial parent starts in its first child")
+        val high = intake.armHigh()
+        high.schedule()
+        assertEquals(IntakeArm.Arm.RAISED_HIGH, intake.arm.state)
+        high.cancel()
+        assertEquals(IntakeArm.Arm.RAISED_LOW, intake.arm.state)
+        intake.raiseHigh().schedule()
+        session.stop()
+        assertEquals(IntakeArm.Arm.RAISED_LOW, intake.arm.state)
+    }
+
+    @Test
+    fun `a request made while outputs are reapplied runs after every state is entered again`() {
+        val (session, intake) = session { IntakeArm() }
+        intake.raiseHigh().schedule()
+        session.tick()
+        intake.events.clear()
+        intake.lowerOnRaised = true
+        session.reapplyOutputs()
+        assertEquals(
+            listOf("enter RAISED", "enter RAISED_HIGH", "roller STOPPED", "exit RAISED_HIGH", "exit RAISED", "enter LOWERED"),
+            intake.events,
+        )
         session.stop()
     }
 }

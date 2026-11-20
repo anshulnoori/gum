@@ -58,7 +58,7 @@ Gum's `Subsystem` builds one KStateMachine 0.38.1 machine with a parallel root f
 Named commands request a state and finish once it is entered. A request valid only `from` certain states leaves the state alone from any other; automatic transitions run after Ivy each update.
 JVM tests drive real Ivy and KStateMachine, including the intake with fake motors.
 Feedback control is implemented: `during(state)` runs control after automatic transitions, `request(state) { }` sets data in the transition's effect, and `reach(state)` waits for a state; JVM tests drive a flywheel with a fake sensor.
-Outcomes, timeouts, and routines were implemented, then removed in favor of Ivy's groups and state checks ([ADR 0006](adr/0006-plain-ivy-composition.md)). Faults and nested states remain.
+Outcomes, timeouts, and routines were implemented, then removed in favor of Ivy's groups and state checks ([ADR 0006](adr/0006-plain-ivy-composition.md)). Parallel regions, nested states, and history are implemented ([ADR 0007](adr/0007-subsystems-made-of-regions.md)). Faults remain.
 
 Ivy 1.1.1 reentrancy, observed against the real dependency:
 a command interrupted by a command scheduled during `Scheduler.execute()` still runs `execute()` once more in that pass, after its `end(INTERRUPTED)`.

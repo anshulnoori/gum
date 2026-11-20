@@ -25,7 +25,9 @@ class BackgroundTest {
             }
         }.initialize(Unit)
         assertTrue(firstRead.await(2, TimeUnit.SECONDS), "reads start in INIT")
-        assertTrue(latest.value!! >= 3 && latest.ageSeconds < 1.0)
+        // A read's result is stored after the read returns.
+        eventually { (latest.value ?: 0) >= 3 }
+        assertTrue(latest.ageSeconds < 1.0)
         session.stop()
 
         val afterStop = reads.get()
@@ -44,9 +46,18 @@ class BackgroundTest {
         }.initialize(Unit)
         session.start()
         assertTrue(failed.await(2, TimeUnit.SECONDS))
-        Thread.sleep(20)
+        // The failure is recorded after the read throws.
+        eventually { runCatching { latest.value }.isFailure }
         val error = assertFailsWith<IllegalStateException> { session.tick() }
         assertEquals("I2C timeout", error.cause?.message)
         assertEquals(SessionState.STOPPED, session.state)
+    }
+
+    private fun eventually(condition: () -> Boolean) {
+        val deadline = System.nanoTime() + 2_000_000_000
+        while (!condition()) {
+            check(System.nanoTime() < deadline) { "Timed out" }
+            Thread.sleep(1)
+        }
     }
 }

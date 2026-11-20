@@ -76,7 +76,7 @@ abstract class Subsystem {
         history: History = History.NONE,
         block: RegionBuilder<S>.() -> Unit = {},
     ): Region<S> {
-        val region = Region(this, initial, history)
+        val region = Region(this, initial, history, regions.size)
         RegionBuilder(region).block()
         regions += region
         return region
@@ -156,15 +156,20 @@ abstract class Subsystem {
     private fun build(): StateMachine {
         check(regions.isNotEmpty()) { "${javaClass.simpleName} declares no region" }
         return createStdLibStateMachine(javaClass.simpleName, childMode = ChildMode.PARALLEL, start = false) {
-            for (region in regions) region.build(addState(DefaultState(region.name)))
+            for (region in regions) region.build(addState(DefaultState(region.key)))
         }
     }
 
     // KStateMachine queues an event sent while it handles another, such as a request an onEntry
     // makes, and handles it after the current transition finishes.
     internal fun send(event: Event) {
-        machine().processEventBlocking(event)
+        if (reapplying) deferred += event else machine().processEventBlocking(event)
     }
+
+    // While outputs are reapplied, outside any transition, requests wait as KStateMachine would
+    // make them wait during a transition.
+    private var reapplying = false
+    private val deferred = ArrayList<Event>()
 
     internal fun enterInitialState() {
         machine()
@@ -184,8 +189,17 @@ abstract class Subsystem {
     /** Sets every region's outputs again, after a hub that lost them reconnects. */
     internal fun reapply() {
         if (machine == null) return
-        var index = 0
-        while (index < regions.size) regions[index++].reapply()
+        reapplying = true
+        try {
+            var index = 0
+            while (index < regions.size) regions[index++].reapply()
+        } catch (error: Throwable) {
+            deferred.clear()
+            throw error
+        } finally {
+            reapplying = false
+        }
+        while (deferred.isNotEmpty()) send(deferred.removeAt(0))
     }
 
     internal fun reset() {
@@ -202,8 +216,13 @@ class Region<S : Enum<S>> internal constructor(
     private val owner: Subsystem,
     private val initial: S,
     private val history: History,
+    index: Int,
 ) {
     internal val name: String = initial.declaringJavaClass.simpleName
+
+    // KStateMachine needs every state name in the machine to be unique, and two regions can share
+    // an enum or a state name, so names carry the region's position.
+    internal val key = "$index.$name"
 
     /**
      * The innermost state the region is in. In a parent state's `onEntry`, it is that parent until
@@ -227,8 +246,15 @@ class Region<S : Enum<S>> internal constructor(
     internal var duringAction: (S) -> Unit = {}
     internal val automatic = ArrayList<AutomaticTransition<S>>()
 
-    // Where a request for each state goes: the state, or for a parent with history, its history state.
+    private val nodes = HashMap<S, IState>()
+
+    // Where a request for each state goes: the state, or for a parent with shallow history, its
+    // history state.
     private val targets = HashMap<S, IState>()
+
+    // For deep history, the innermost state the region was last in under each parent. KStateMachine's
+    // deep history misses a move between two grandchildren, because their parent does not change.
+    private val lastInside = HashMap<S, S>()
 
     @Suppress("UNCHECKED_CAST")
     private fun parentOf(state: S): S? = (state as? Nested<*>)?.parent as S?
@@ -241,20 +267,24 @@ class Region<S : Enum<S>> internal constructor(
             val kids = children[parent].orEmpty()
             val first = kids.firstOrNull { it in initialPath } ?: kids.first()
             for (state in kids) {
-                val node = DefaultState(state.name)
+                val node = DefaultState("$key.${state.name}")
+                nodes[state] = node
                 if (state == first) container.addInitialState(node) else container.addState(node)
                 node.onEntry {
                     this@Region.state = state
+                    if (history == History.DEEP && state !in children) {
+                        var parent = parentOf(state)
+                        while (parent != null) {
+                            lastInside[parent] = state
+                            parent = parentOf(parent)
+                        }
+                    }
                     entryAction(state)
                 }
                 node.onExit { exitAction(state) }
                 targets[state] = if (state in children) {
                     add(node, state)
-                    when (history) {
-                        History.NONE -> node
-                        History.SHALLOW -> node.historyState(historyType = HistoryType.SHALLOW)
-                        History.DEEP -> node.historyState(historyType = HistoryType.DEEP)
-                    }
+                    if (history == History.SHALLOW) node.historyState(historyType = HistoryType.SHALLOW) else node
                 } else {
                     node
                 }
@@ -268,17 +298,27 @@ class Region<S : Enum<S>> internal constructor(
                 val go = event
                 @Suppress("UNCHECKED_CAST")
                 if (go.region !== this@Region || !allows(go.from as Set<S>?, go.guard)) noTransition()
-                else targetState(targets.getValue(go.to as S))
+                else targetState(target(go.to as S, go.direct))
             }
         }.onTriggered { it.event.effect() }
+    }
+
+    /** The node a transition to [to] enters; [direct] skips history, for returning to the initial state. */
+    private fun target(to: S, direct: Boolean): IState = when {
+        direct -> nodes.getValue(to)
+        history == History.DEEP -> nodes.getValue(lastInside[to] ?: to)
+        else -> targets.getValue(to)
     }
 
     private fun allows(from: Set<S>?, guard: (() -> Boolean)?): Boolean =
         (from == null || from.any(::isIn)) && guard?.invoke() != false
 
-    private fun go(to: S, from: Set<S>? = null, guard: (() -> Boolean)? = null, effect: () -> Unit = {}) {
-        owner.send(Go(this, to, from, guard, effect))
+    private fun go(to: S, from: Set<S>? = null, guard: (() -> Boolean)? = null, effect: () -> Unit = {}, direct: Boolean = false) {
+        owner.send(Go(this, to, from, guard, effect, direct))
     }
+
+    /** Returns to the initial state itself, whatever history would choose. */
+    private fun goInitial() = go(initial, direct = true)
 
     /** Requests [to]; in [to] already, only the effect runs. */
     private fun take(to: S, from: Set<S>?, guard: (() -> Boolean)?, effect: () -> Unit) {
@@ -299,13 +339,24 @@ class Region<S : Enum<S>> internal constructor(
 
     internal fun during() = duringAction(state)
 
-    /** Runs `onEntry` again for every state the region is in, outermost first. */
+    /**
+     * Runs `onEntry` again for every state the region is in, outermost first, with [state] set as a
+     * transition would set it. The subsystem holds requests made meanwhile until every region is done.
+     */
     internal fun reapply() {
-        val path = generateSequence(state, ::parentOf).toList()
-        for (index in path.indices.reversed()) entryAction(path[index])
+        val leaf = state
+        val path = generateSequence(leaf, ::parentOf).toList()
+        try {
+            for (index in path.indices.reversed()) {
+                state = path[index]
+                entryAction(path[index])
+            }
+        } finally {
+            state = leaf
+        }
     }
 
-    internal fun reset() = go(initial)
+    internal fun reset() = goInitial()
 
     // Each command below reports done only until it ends. Ivy 1.1.1's Scheduler.execute can reach a
     // command that was already interrupted in the same pass; a command that reports done there is
@@ -341,8 +392,11 @@ class Region<S : Enum<S>> internal constructor(
                 if (it == EndCondition.SUSPENDED) {
                     suspendedAt = owner.updates
                 } else {
+                    // Cancelling a suspended hold leaves the region to the command that took it.
+                    val suspended = suspendedAt != NOT_SUSPENDED
+                    suspendedAt = NOT_SUSPENDED
                     ended = true
-                    if (isIn(to) && to != initial) go(initial)
+                    if (!suspended && isIn(to) && to != initial) goInitial()
                 }
             }
     }
@@ -364,6 +418,7 @@ class Region<S : Enum<S>> internal constructor(
         val from: Set<*>?,
         val guard: (() -> Boolean)?,
         val effect: () -> Unit,
+        val direct: Boolean,
     ) : Event
 
     private companion object {
