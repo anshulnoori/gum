@@ -1,7 +1,7 @@
 # Implemented lifecycle interface
 
 The `core` module runs on the JVM without Android or robot hardware.
-It implements the first lifecycle slice, not the full Gum runtime.
+It implements the lifecycle every Gum program runs through.
 The `ftc` module hosts these programs in the FTC SDK; see [FTC host](#ftc-host).
 
 ## Define a program and acquire dependencies
@@ -104,7 +104,7 @@ Status: the core contract is JVM-tested, and so is the host's handoff for both s
 Ivy's `Scheduler` is a JVM-wide singleton; each session takes ownership of it:
 
 - `initialize` resets it, dropping commands left from outside a session.
-- Each active tick samples buttons and runs their actions, runs `Scheduler.execute()`, updates subsystems, then runs the program's `loop` callbacks.
+- Each active tick runs every subsystem's `beforeCommands`, applies button changes and runs their actions, runs `Scheduler.execute()`, updates subsystems, then runs the program's `loop` callbacks.
 - STOP resets it after every other cleanup, including returning subsystems to their initial states. Commands still scheduled are dropped without their `end` callback.
 - INIT ticks do not advance commands. Ivy starts a command when it is scheduled, so schedule commands from START or later.
 
@@ -137,6 +137,7 @@ class Intake(
 - `request(state, from = ...)` is valid only from the named state, or from a set of states. From any other state the state stays, and Gum reports nothing; a team that wants a log checks the state itself. Requesting the current state always runs its effect.
 - `onEntry` runs on every entry, including the initial state, which each subsystem enters at INIT, after setup. A subsystem created later enters it on its first update.
 - STOP returns each subsystem to its initial state, whatever its commands allow.
+  This resets the subsystem's state, not the mechanism: by the time Gum cleans up, the SDK has fail-safed every hub and drops nonzero motor powers and velocities, target positions, and every servo write until the next OpMode initializes (`LynxModule.sendCommand`, `OpModeManagerImpl.callActiveOpModeStop`). An initial state's `onEntry` can still set motor power 0 and change modes. When `runOpMode` ends by throwing, the SDK has not blocked writes, so cleanup reaches the hardware.
 
 Mechanisms with feedback hold data beside their state, run control in `during`, and take automatic transitions:
 
@@ -164,7 +165,9 @@ class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Sub
 - `automatic { A to B whenever { condition } }` declares a transition the subsystem takes by itself; `anyState to B` starts from any other state. Each update, after commands, Gum takes the first declared transition whose source is the current state and whose condition is true. Declaration order decides between matches, and Gum takes at most one automatic transition per update.
 - Conditions must only read: Gum may evaluate any of them on any update. An automatic transition without `whenever` fails when the subsystem is created.
 - Automatic transitions are not commands and take no requirement. Commands cannot request them.
-- `effect { }` runs when its transition is taken, before the target's `onEntry`. On `request(state) { }` the block is the effect: it runs only when the transition is taken. Requesting the current state runs the effect without re-entering, so a new target takes effect.
+- `effect { }` runs when its transition is taken, before the old state's `onExit` and the target's `onEntry`. On `request(state) { }` the block is the effect: it runs only when the transition is taken. Requesting the current state runs the effect without re-entering, so a new target takes effect.
+- `onExit(state)` runs each time the subsystem leaves `state`, after the effect and before the next `onEntry`, for cleanup that belongs to the state. Overriding it is optional.
+- `onEntry` may read `state`, which is already the state entered. A request that `onEntry` or `onExit` makes runs after the current transition finishes; KStateMachine queues it.
 - `during(state)` runs on every update after START, after commands and automatic transitions.
 - `beforeCommands()` runs on every update after START, before button actions and commands, for reads that commands decide from in the same update, such as a localizer's pose.
 - `reach(state)` reserves the subsystem and finishes once it is in `state`.
@@ -191,11 +194,11 @@ val main = teleop("Main") { robot ->
 ```
 
 - Gamepad buttons change from the SDK's gamepad callback, not by polling. The callback runs on the SDK's event loop thread; Gum queues each change and applies them on the OpMode thread at the start of the next update, in arrival order, so a tap between updates still presses and releases.
-  The queue is a JCTools single-producer, single-consumer circular buffer (`SpscAtomicArrayQueue`, 256 changes) of preallocated changes, so a button change allocates nothing. Only the event loop thread posts. If the OpMode thread stalls long enough to fill it, the next update sets each button to its latest reported state; only taps in between are lost.
+  The queue is a JCTools multi-producer, single-consumer circular buffer (`MpscAtomicArrayQueue`, 256 changes) of preallocated changes, so a button change allocates nothing. The event loop thread and the OpMode thread may both post. If the OpMode thread stalls long enough to fill it, the next update sets each button to its latest reported state; only taps in between are lost.
 - `isDown`, `wasPressed`, and `wasReleased` describe the latest update, in INIT and after START, so INIT code polls them.
 - `onPress` and `onRelease` actions run only after START, before Ivy advances, so a command they schedule starts and runs in that update. Bind them during setup.
 - A button held through START, or down when first used, presses only after a release.
-- `whileHeld { command }` schedules a fresh command on press and cancels it on release. A subsystem's hold command, built with `hold(state)`, enters `state`, keeps running, and returns to the initial state when cancelled or interrupted, so a newer hold on the same subsystem takes over. If an automatic transition leaves `state`, or its `from` does not allow the request, the hold ends and leaves the state alone.
+- `whileHeld { command }` schedules a fresh command on press and cancels it on release. A subsystem's hold command, built with `hold(state)`, enters `state`, keeps running, and returns to the initial state when cancelled or interrupted, so a newer hold on the same subsystem takes over. A hold set to `InterruptedBehavior.SUSPEND` keeps its state's place instead: when Ivy resumes it, it takes its state back on the next update. If an automatic transition leaves `state`, or its `from` does not allow the request, the hold ends and leaves the state alone.
 - STOP from an action skips the remaining actions.
 - Programs use `gamepad1`, `gamepad2`, `telemetry`, and `hardwareMap` directly. The gamepads are `Controller`s: every SDK button as a `Button` (PlayStation and Xbox names are the same button), sticks and triggers as `Double`, and `raw` for the SDK gamepad. Sticks and triggers also come from the SDK's callback: each update reads the newest packet that arrived before it started. `raw` is copied on another thread, so values read from it can mix two packets.
 - `Button { condition }` checks a condition at the start of each update, for inputs with no events, such as a sensor threshold. Hub sensors have no SDK callbacks; they change when Gum bulk-reads the hubs, once per update.
@@ -239,7 +242,7 @@ class Shooter(sensor: Rev2mDistanceSensor = hardware(RobotMap.ballSensor)) : Sub
 - Vision processors and the Limelight already deliver results on their own threads; reading them through `background` would poll them twice.
 - The read must only read. A failed read stops the OpMode the next time the loop reads `value`.
 - The read runs on another thread, so it cannot use `hardware` or `robot.battery`, which belong to the OpMode thread. Get the device first, as the constructor default above does.
-- STOP stops readers before subsystems reset. The SDK sends to the hubs under one transmission lock, shared by both hubs on a portal, so a background I2C read can delay a bulk read on either hub while it runs.
+- STOP asks every reader to stop, then waits for all of them against one 400 ms deadline, before subsystems reset. The SDK sends to the hubs under one transmission lock, shared by both hubs on a portal, so a background I2C read can delay a bulk read on either hub while it runs.
 
 ## Robot graph
 
@@ -254,6 +257,7 @@ interface RobotGraph : Robot {
 
 `@SingleIn(OpModeScope::class)` gives each run one intake. Metro uses a constructor default when the graph has no binding for that parameter. `Robot` supplies `battery`.
 Each INIT reads every accessor `RobotGraph` declares before setup runs, so every subsystem exists, and enters its initial state, during INIT, even one a program first uses after START.
+INIT reads only accessors, the graph's abstract members; it never calls a `@Provides` function, which has a body, so a public provider does not build an unscoped extra. A subsystem accessor that returns a new instance on each read, because the subsystem lacks `@SingleIn(OpModeScope::class)`, fails INIT with a message saying so.
 
 ## Using Pedro
 
@@ -270,6 +274,7 @@ Gum has no Pedro Pathing module. Pedro is an optional integration that TeamCode 
 Gum includes Panels (`com.bylazar:fullpanels:1.0.20`), which starts with the Robot Controller app and serves on port 8001.
 
 - `telemetry` goes to both the Driver Station and Panels. The SDK's items, lines, and log are unchanged; Panels shows each line as text, taking a `Func` value when it is added.
+- Lines reach Panels only on updates when Panels will transmit them: a laptop is connected and Panels' send interval has passed. On every other update, including every update in a match with no laptop, nothing is formatted, evaluated, or serialized for Panels.
 - `field` is the Panels field: `field.moveCursor(x, y); field.circle(9.0)`. Draw it again each update.
 - After every update, Gum sends that update's telemetry and drawing to Panels and clears both. Panels limits how often it transmits.
 - Live-tuned values use Panels' `@Configurable` on a class or object; Panels picks up its static, non-final fields:
@@ -320,10 +325,11 @@ Gum registers every public top-level program in the `org.firstinspires.ftc.teamc
 `GumProgramScanner` is a Sloth `OpModeScanner`. Sloth runs it when the Robot Controller app starts and after each hot reload (`./gradlew :TeamCode:deploySloth`), replacing the previous registrations.
 Make a program `private` to hide it from the Driver Station.
 
-Each SDK run is a `LinearOpMode` whose `runOpMode` checks the active configuration for every device the [hardware configuration](hardware.md) declares, initializes a new session, ticks it until START, starts it, ticks it until STOP, and stops it in a `finally` block.
-All of this runs on the SDK's one OpMode thread, which satisfies the session thread contract. Updates run back to back; the SDK's iterative `OpMode` would sleep 1 ms after each and copy both gamepads before each.
+Each SDK run is a `LinearOpMode` whose `runOpMode` initializes a new session, whose dependencies first check the active configuration for every device the [hardware configuration](hardware.md) declares, ticks it until START, starts it, ticks it until STOP, and stops it in a `finally` block.
+All of this runs on the SDK's one OpMode thread, which satisfies the session thread contract. Active updates run back to back, without `opModeIsActive()`, which yields the thread on every call; the SDK's iterative `OpMode` would sleep 1 ms after each and copy both gamepads before each. INIT updates pause 1 ms each, because INIT has nothing to keep up with.
 The SDK interrupts the OpMode thread at STOP; cleanup runs with the interrupt cleared, then restores it.
 The host owns bulk reads: it sets every hub to manual caching and clears the cache once before each update.
+The host checks each update whether a hub that stopped responding responds again, such as after it lost power. That hub has lost its outputs, so the host forgets every write cache and runs each subsystem's `onEntry` for its current state again. The SDK reports no reset event; a reset short enough that no command times out goes unnoticed.
 For a [debug program](#debug-programs), the host adds the timing lines before each update. After each update, the host sends Driver Station telemetry, then the update's telemetry and field drawing to Panels.
 FTC SDK 12.0 `OpModeMeta` carries the description; whether the Driver Station shows it is unverified.
 

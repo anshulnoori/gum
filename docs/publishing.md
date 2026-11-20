@@ -17,7 +17,7 @@ The Gradle plugin also publishes a plugin marker, `com.anshulnoori.gum.hardware:
 
 ## Versions
 
-The `version` in the root `build.gradle.kts` applies to every library module, and `gradle-plugin/build.gradle.kts` must set the same version. Versions follow semantic versioning. Between releases it ends in `-SNAPSHOT`; Gradle publishes each snapshot with a timestamp, and consumers get the newest one.
+The `version` in the root `build.gradle.kts` applies to every library module, and `gradle-plugin/build.gradle.kts` must set the same version. The plugin writes its version into its jar and resolves `com.anshulnoori.gum:hardware` at that version, and compiles the hardware sources with the Kotlin version of the app's Kotlin plugin, so neither is set by hand. Versions follow semantic versioning. Between releases it ends in `-SNAPSHOT`; Gradle publishes each snapshot with a timestamp, and consumers get the newest one.
 
 To release:
 

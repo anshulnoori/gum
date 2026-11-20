@@ -26,6 +26,8 @@ Each property name is the device's configuration name.
 The configuration name must use lowercase letters, digits, and underscores, because it is also an Android resource name.
 Declaring a port the hub lacks, a port twice, or a name twice fails the build with a message naming the problem.
 Expansion Hubs must connect to the Control Hub over RS485; hubs connected only over USB need serial numbers and are not supported.
+`servoHub(address)` declares a REV Servo Hub on the RS485 bus, with `servo` and `crServo` on ports 0 to 5. Every hub needs its own address.
+Several I2C devices can share a bus, but not two at the same fixed I2C address, such as two REV color sensors (0x52); that fails the build and names both, so put one on another bus.
 
 USB devices belong to the robot, not to a hub:
 
@@ -41,6 +43,7 @@ It works on the OpMode thread while an OpMode runs. A subsystem resolves only th
 A mistyped device is a compile error.
 
 Programs built with the generated `teleop`, `autonomous`, and `utility` check the configuration at every INIT: if the active configuration lacks a declared device, INIT fails with one message listing every missing device.
+The robot configuration comes from the installed app, so a Sloth deploy cannot change it. When `RobotMap` has changed since the app was installed, such as a device moved to another port, INIT fails and asks for the app to be installed again, instead of running the old wiring.
 
 ## Write caching
 
@@ -57,6 +60,7 @@ The comparison is with the last value sent, not the last one asked for, so a slo
 It always sends exact 0 and a change of sign, so a mechanism always stops and reverses.
 Changing the direction, run mode, velocity, motor enable, servo range, or PWM settings through the wrapper makes the next write go through.
 The wrapper lasts for the session, and servo wrappers keep the SDK's `PwmControl`.
+When a hub stops responding and comes back, such as after a power loss, Gum forgets every cached value so the next writes go through.
 
 The default tolerance is 0: Gum returns the SDK device itself, which already skips a write equal to the last one.
 Only writes through `hardware(...)` are cached; a library that finds the device by name in `hardware.map`, such as Pedro, writes to the SDK device directly.

@@ -3,8 +3,8 @@
 ## Baseline status
 
 The repository has independent history and a documented design.
-The first JVM lifecycle slice has a pinned Gradle/Kotlin build and dependency locks.
-The remaining integrations have no completed compatibility tests.
+The lifecycle, FTC host, and integrations are implemented and JVM-tested, with a pinned Gradle/Kotlin build and dependency locks.
+Nothing has run on a Control Hub yet.
 
 The user approved toolchain installation and tests through program descriptors and host-driven sessions.
 
@@ -99,7 +99,7 @@ Exercise dynamic successor initialization on the selected FTC SDK.
 ## 6b. Integrate background reads and Panels
 
 Status: background reads and Panels telemetry and field drawing are implemented and JVM-tested. Panels on a Robot Controller is not yet verified.
-SDK 12 already skips motor and servo writes that repeat the last value exactly, so Gum adds no write cache.
+SDK 12 already skips motor and servo writes that repeat the last value exactly. Gum adds an opt-in write cache that also skips writes within a tolerance; see [hardware](hardware.md).
 
 ## 7. Establish the competition baseline
 

@@ -8,7 +8,7 @@ No source-only review establishes device compatibility or competition readiness.
 
 - Provide responsive, predictable FTC robot control.
 - Keep user code command-first and light on custom DSL syntax.
-- Support complex hierarchical subsystem states through KStateMachine.
+- Model subsystem states with KStateMachine.
 - Integrate dependency lifetimes with OpMode lifetimes.
 - Preserve fast development through Sloth reload.
 - Prepare a usable competition baseline before expanding tooling.
@@ -21,7 +21,7 @@ The first event date, robot hardware, and performance targets remain unknown.
 | --- | --- |
 | Gum | Program descriptors, lifecycle, controller events, execution ordering, shutdown, integration diagnostics |
 | Ivy | Commands, requirements, priorities, conflict policies, sequence/parallel/race/deadline composition |
-| KStateMachine | Subsystem hierarchy, guards, transitions, entry/exit behavior, concurrent state regions |
+| KStateMachine | Subsystem transitions and their guards, entry and exit behavior, and queueing a transition requested while another runs |
 | DI library | Compile-time graph validation and generated construction |
 | Subsystem | Hardware ownership, control algorithms, valid operations, readiness, faults, safe responses |
 | Sloth | Development class reload and registration facilities |
@@ -134,7 +134,7 @@ Bindings construct fresh commands and share scheduler confinement.
 
 One owner controls manual bulk-cache invalidation and sensor sampling.
 Bulk data does not include all I2C sensors or imply simultaneous multi-hub measurements.
-Each active update applies button changes and runs their actions, runs `Scheduler.execute()`, then updates each subsystem (at most one automatic transition, then `during`), then runs the program's `loop` callbacks ([lifecycle](lifecycle.md#ivy-commands)). Outputs are written by commands, `onEntry`, and `during`.
+Each active update runs every subsystem's `beforeCommands`, applies button changes and runs their actions, runs `Scheduler.execute()`, then updates each subsystem (at most one automatic transition, then `during`), then runs the program's `loop` callbacks ([lifecycle](lifecycle.md#ivy-commands)). Outputs are written by commands, `onEntry`, and `during`.
 That order must avoid stale completion observations and conflicting output owners.
 
 Optional background work returns timestamped data. It does not write motors independently.
