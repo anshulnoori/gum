@@ -10,14 +10,14 @@ Gum does not rebuild what Ivy already provides.
 2. **The refusal log is removed.** A request whose `from` does not include the current state leaves the state as it is. Gum logs nothing and has no `onRefused` callback. A team that wants a log writes it.
 3. **`withTimeout` is removed.** Ivy limits a command with `raceWith(waitMs(ms))` or `until { }`.
 4. **Routines are removed**, with `await`, `waitUntil`, `waitSeconds`, and `nextUpdate`. Programs compose with Ivy's groups: `then`, `with`, `raceWith`, `until`, `sequential`, `parallel`, `race`, `deadline`, `conditional`, `match`, `repeat`, `loop`, and `lazy`.
-5. **`request`, `hold`, and `reach` stay**, as small `CommandBuilder` commands. They tie a subsystem's KStateMachine transition to an Ivy requirement, which Ivy has no equivalent for.
+5. **`request` and `hold` stay**, as small `CommandBuilder` commands. They tie a KStateMachine transition to an Ivy requirement, which Ivy has no equivalent for. `reach` was removed later ([ADR 0007](0007-subsystems-made-of-regions.md)): it made no transition, and its requirement interrupted the command that owned the region; Ivy's `waitUntil` waits for a state.
 
 ## Consequences
 
 apex-2025's programs need none of the removed pieces: its autos are timed sequences, and its waits check sensor state.
 `lazy { }` reserves nothing by itself, so a lazily built command that uses a subsystem adds `.requiring(...)` for the regions it uses ([ADR 0007](0007-subsystems-made-of-regions.md)).
 Ivy's group bugs, such as a cancelled `Sequential` ending steps that never started, now reach programs directly; they are fixed upstream in Ivy, not in Gum.
-The double-end guards in `request`, `hold`, and `reach` stay until Gum builds against an Ivy release with Ivy#10.
+The double-end guards in `request` and `hold` stay until Gum builds against an Ivy release with Ivy#10.
 
 ## Alternatives
 

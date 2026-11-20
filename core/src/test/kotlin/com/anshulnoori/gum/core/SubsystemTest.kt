@@ -31,7 +31,7 @@ class SubsystemTest {
         fun collect() = roller.request(State.COLLECTING)
         fun eject() = roller.request(State.EJECTING)
         fun stop() = roller.request(State.OFF)
-        fun ejectFromOff() = roller.request(State.EJECTING, from = State.OFF) { entered += "eject effect" }
+        fun ejectFromOff() = roller.request(State.EJECTING, from = State.OFF, effect = { entered += "eject effect" })
         fun collecting() = roller.hold(State.COLLECTING)
     }
 
@@ -53,9 +53,9 @@ class SubsystemTest {
         }
         val state get() = wheel.state
 
-        fun spinTo(rpm: Double) = wheel.request(Speed.SPINNING_UP) { target = rpm }
-        fun boost(rpm: Double) = wheel.request(Speed.READY, from = setOf(Speed.SPINNING_UP)) { target = rpm }
-        fun spinUp() = spinTo(3000.0).then(wheel.reach(Speed.READY))
+        fun spinTo(rpm: Double) = wheel.request(Speed.SPINNING_UP, effect = { target = rpm })
+        fun boost(rpm: Double) = wheel.request(Speed.READY, from = setOf(Speed.SPINNING_UP), effect = { target = rpm })
+        fun spinUp() = spinTo(3000.0).then(waitUntil { wheel.isIn(Speed.READY) })
     }
 
     private fun <S> session(create: () -> S): Pair<OpModeSession, S> {
@@ -230,7 +230,7 @@ class SubsystemTest {
     }
 
     @Test
-    fun `during runs control after commands each update, and reach waits for the state`() {
+    fun `during runs control after commands each update, and Ivy's waitUntil waits for the state`() {
         val (session, flywheel) = session { Flywheel() }
         val spinUp = flywheel.spinUp()
         spinUp.schedule()
@@ -242,7 +242,7 @@ class SubsystemTest {
         session.tick()
         assertEquals(Speed.READY, flywheel.state)
         assertEquals(0.02, flywheel.power, 1e-9, "control runs after the automatic transition")
-        assertTrue(spinUp.isScheduled, "reach finishes on the next command pass")
+        assertTrue(spinUp.isScheduled, "the wait finishes on the next command pass")
         session.tick()
         assertFalse(spinUp.isScheduled)
         session.stop()
@@ -392,7 +392,6 @@ class SubsystemTest {
         fun spin() = roller.request(Roller.SPINNING)
         fun armUp() = arm.hold(Arm.RAISED)
         fun armHigh() = arm.hold(Arm.RAISED_HIGH)
-        fun reachRaised() = arm.reach(Arm.RAISED)
     }
 
     @Test
@@ -428,13 +427,13 @@ class SubsystemTest {
     @Test
     fun `a parent enters its first child, its entry runs first and its exit last, and isIn covers its children`() {
         val (session, intake) = session { IntakeArm() }
-        val raised = intake.reachRaised()
+        val raised = waitUntil { intake.arm.isIn(IntakeArm.Arm.RAISED) }
         intake.raiseHigh().schedule()
         assertEquals(IntakeArm.Arm.RAISED_HIGH, intake.arm.state)
         assertTrue(intake.arm.isIn(IntakeArm.Arm.RAISED))
         raised.schedule()
         session.tick()
-        assertFalse(raised.isScheduled, "reach of a parent finishes in any child")
+        assertFalse(raised.isScheduled, "isIn a parent is true in any child")
         intake.raise().schedule()
         assertEquals(IntakeArm.Arm.RAISED_HIGH, intake.arm.state, "requesting a parent it is in changes nothing")
         intake.raiseLow().schedule()
@@ -547,5 +546,55 @@ class SubsystemTest {
             intake.events,
         )
         session.stop()
+    }
+
+    @Test
+    fun `STOP runs onStop before regions reset, and a subsystem can have no region`() {
+        val events = mutableListOf<String>()
+        class Drivetrain : Subsystem() {
+            override fun beforeCommands() { events += "update" }
+            override fun onStop() { events += "stop" }
+        }
+        class Stopping : Subsystem() {
+            val roller = region(State.OFF) { onEntry { events += "enter $it" } }
+            fun collect() = roller.request(State.COLLECTING)
+            override fun onStop() { events += "stop at ${roller.state}" }
+        }
+        val (session, both) = session { Drivetrain() to Stopping() }
+        both.second.collect().schedule()
+        session.tick()
+        session.stop()
+        assertEquals(listOf("enter OFF", "enter COLLECTING", "update", "stop at COLLECTING", "enter OFF", "stop"), events)
+    }
+
+    @Test
+    fun `a trailing lambda on a request is its guard, and a refusing guard runs no effect`() {
+        var allowed = false
+        var effects = 0
+        class Gated : Subsystem() {
+            val roller = region(State.OFF)
+            fun collect() = roller.request(State.COLLECTING, effect = { effects++ }) { allowed }
+        }
+        val (session, gated) = session { Gated() }
+        gated.collect().schedule()
+        assertEquals(State.OFF to 0, gated.roller.state to effects)
+        allowed = true
+        gated.collect().schedule()
+        assertEquals(State.COLLECTING to 1, gated.roller.state to effects)
+        session.stop()
+    }
+
+    @Test
+    fun `a region declaring an action twice fails when the subsystem is created`() {
+        class Twice : Subsystem() {
+            init {
+                region(State.OFF) {
+                    onEntry {}
+                    onEntry {}
+                }
+            }
+        }
+        val error = assertFailsWith<IllegalStateException> { session { Twice() } }
+        assertEquals("State: onEntry is declared twice; put both in one onEntry { }", error.message)
     }
 }

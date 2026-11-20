@@ -136,7 +136,7 @@ class Intake(
 ```
 
 - A subsystem joins the session running on its thread when it is constructed; constructing one outside a session fails.
-- Named commands are a subsystem's whole API. `request`, `hold`, and `reach` are protected, so programs call `intake.collect()`, not `intake.rollers.request(...)`. Programs read a region's state, as in `intake.rollers.state`.
+- Named commands are a subsystem's whole API. `request` and `hold` are protected, so programs call `intake.collect()`, not `intake.rollers.request(...)`. Programs read a region's state, as in `intake.rollers.state`.
 - `request(state)` is an Ivy command that reserves the region, transitions it to `state`, and finishes at once. Any state can be requested from any other.
 - `request(state, from = ...)` is valid only from the named state, or from a set of states. `guard = { ... }` refuses the request when it returns false, and can read other regions. A refused request leaves the state, runs no effect, and reports nothing; a team that wants a log checks the state itself. Requesting a state the region is already in runs its effect, if the guard allows it.
 - `onEntry` sets outputs and must be safe to repeat: Gum also reruns it, outermost state first, when a hub that lost its outputs reconnects. A request it makes then waits until every region has been reapplied.
@@ -164,20 +164,22 @@ class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Sub
         during { if (it != State.OFF) motor.power = KP * (targetRpm - rpm) }
     }
 
-    fun spinTo(rpm: Double): Command = wheel.request(State.SPINNING_UP) { targetRpm = rpm }.then(wheel.reach(State.READY))
+    fun spinTo(rpm: Double): Command =
+        wheel.request(State.SPINNING_UP, effect = { targetRpm = rpm }).then(waitUntil { wheel.isIn(State.READY) })
 }
 ```
 
 - `automatic { A to B whenever { condition } }` declares a transition the region takes by itself; `anyState to B` starts from any other state. Each update, after commands, Gum takes the first declared transition whose source the region is in, whose target it is not in, and whose condition is true. Declaration order decides between matches, and Gum takes at most one automatic transition per region per update.
 - Conditions must only read, and can read other regions: Gum may evaluate any of them on any update. An automatic transition without `whenever` fails when the subsystem is created.
 - Automatic transitions are not commands and take no requirement. Commands cannot request them.
-- `effect { }` runs when its transition is taken, before the old state's `onExit` and the target's `onEntry`. On `request(state) { }` the block is the effect: it runs only when the transition is taken. Requesting the current state runs the effect without re-entering, so a new target takes effect.
+- `effect { }` runs when its transition is taken, before the old state's `onExit` and the target's `onEntry`. On `request(state, effect = { })` the effect runs only when the transition is taken. A trailing lambda on `request` or `hold` is the guard, which returns a Boolean, so an effect cannot be written where a guard belongs. Requesting the current state runs the effect without re-entering, so a new target takes effect.
 - `onExit { }` runs each time the region leaves a state, after the effect and before the next `onEntry`, for cleanup that belongs to the state.
 - `onEntry` may read the region's `state`, which is already the state entered. A request that `onEntry` or `onExit` makes runs after the current transition finishes; KStateMachine queues it.
 - `during { }` runs on every update after START, after commands and every region's automatic transitions.
 - `beforeCommands()` is overridden on the subsystem and runs on every update after START, before button actions and commands, for reads that commands decide from in the same update, such as a localizer's pose.
-- `reach(state)` reserves the region and finishes once it is in `state`.
-- A `reach` that never arrives waits forever; Ivy limits it, as in `reach(state).raceWith(waitMs(2000.0))`. See [composing commands](#composing-commands). Faults are not reported yet.
+- A command that waits for a state is Ivy's `waitUntil { wheel.isIn(State.READY) }`. It requires nothing, so it never interrupts the command that owns the region. It can wait forever; Ivy limits it, as in `waitUntil { ... }.raceWith(waitMs(2000.0))`. See [composing commands](#composing-commands). Faults are not reported yet.
+- `onStop()`, overridden on the subsystem, runs at STOP before its regions return to their initial states, for what the mechanism must do whatever state it is in. A subsystem with nothing but a library object to update, such as a drivetrain Pedro drives, declares no region and uses `beforeCommands` and `onStop`.
+- Declaring `onEntry`, `onExit`, or `during` twice in one region fails when the subsystem is created.
 
 ### Regions, parent states, and history
 
@@ -212,7 +214,7 @@ class IntakeArm(
 - Each region is its own Ivy requirement. A command for the arm and one for the roller run at the same time; a command for one region interrupts only that region's command. A group of commands for both, such as `stow`, requires both.
 - Rules between regions are guards and automatic transitions that read the other region.
 - A state enum that implements `Nested` can give a state a `parent`, declared before it. A region is always in a state without children; requesting a parent enters its first child, or the child on the way to the region's initial state. `isIn(parent)` is true in any state inside it, and `state` names the innermost state. A parent's `onEntry` runs before its child's, and its `onExit` after; moving between two children of one parent leaves the parent entered.
-- `from`, `reach`, `hold`, and automatic transitions on a parent cover every state inside it. Requesting a parent the region is already in changes no state; its effect runs if the guard allows it.
+- `from`, `hold`, `isIn`, and automatic transitions on a parent cover every state inside it. Requesting a parent the region is already in changes no state; its effect runs if the guard allows it.
 - `history = History.SHALLOW` makes requesting a parent return to the child the region was last in; `History.DEEP` returns to the innermost state it was last in. The default, `History.NONE`, enters the first child every time.
 
 ## Controller events
@@ -266,7 +268,7 @@ val score = robot.intake.collect()
 ```
 
 - `then`, `with`, `raceWith`, `until`, `sequential`, `parallel`, `race`, `deadline`, `conditional`, `match`, `repeat`, `loop`, and `lazy` come from Ivy, with Ivy's requirements: a group reserves everything its children reserve.
-- Whether a step succeeded is read from state, not from the command: a request `from` states that do not include the current one leaves the state as it is, and a `reach` that has not arrived leaves the subsystem short of its state.
+- Whether a step succeeded is read from state, not from the command: a request `from` states that do not include the current one leaves the state as it is, and a `waitUntil` that has not finished leaves the region short of its state.
 - `lazy { }` builds its command when it starts, so it reserves nothing by itself; add `.requiring(...)` for the regions it uses, such as `.requiring(robot.intake.rollers)`.
 - Ivy has no timeout decorator. `cmd.raceWith(waitMs(ms))` limits a command; a team that wants a name for it can write one line: `fun Command.timeout(ms: Double) = raceWith(waitMs(ms))`.
 
@@ -308,7 +310,7 @@ Gum has no Pedro Pathing module. Pedro is an optional integration that TeamCode 
 
 - TeamCode depends on `com.pedropathing:revhub` and keeps Pedro's configs in its own constants file, with device names taken from `RobotMap`, such as `RobotMap.frontLeft.name`, so the generated configuration and the INIT device check cover Pedro's devices.
 - TeamCode's robot graph provides one `Follower` per INIT with a Metro `@Provides @SingleIn(OpModeScope::class)` function built from `hardware.map`. Subsystems that need the follower take it as a constructor parameter.
-- A TeamCode drive subsystem updates the follower in `beforeCommands`, before commands run, as Pedro's docs do, and stops the drivetrain at STOP. STOP returns a subsystem to its initial state only from another state, so the drive tracks whether the follower is moving with two states and automatic transitions.
+- A TeamCode drive subsystem declares no region: it updates the follower in `beforeCommands`, before commands run, as Pedro's docs do, and stops the drivetrain in `onStop`.
 - Follower commands require the follower, so Ivy gives the drivetrain one owner. A stick drive runs as a low-priority command that Ivy suspends: `.setPriority(Int.MIN_VALUE).setInterruptedBehavior(InterruptedBehavior.SUSPEND)`.
 - Tuning uses Pedro's AutoTune and its `@Tuner` methods, in a TeamCode source set that only tuning builds include, because AutoTune serves a web page whenever it is installed.
 

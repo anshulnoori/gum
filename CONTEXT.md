@@ -46,9 +46,6 @@ A command that transitions a region to a state and finishes at once; the region 
 **Hold**:
 A command that enters a state and keeps running. When it is cancelled or interrupted, the region returns to its initial state. If an automatic transition leaves the state, the hold ends and leaves the state alone.
 
-**Reach**:
-A command that finishes once a region is in a given state.
-
 **Refused request**:
 A request made from a state it is not valid from, or while its guard does not allow it. The state stays, its effect does not run, and Gum reports nothing.
 

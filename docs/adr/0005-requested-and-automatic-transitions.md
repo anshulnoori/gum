@@ -6,7 +6,7 @@ Status: accepted. Amended by [ADR 0006](0006-plain-ivy-composition.md), which re
 
 A subsystem is in one **state** at a time and changes state by a **transition**, following UML state machines. `Subsystem<S>` has `onEntry(state)`, which sets outputs on entry, and `during(state)`, which runs every update while in a state.
 
-Named commands are a subsystem's whole API. `request`, `hold`, and `reach` are protected; a subsystem exposes commands such as `collect()` and `collecting()`.
+Named commands are a subsystem's whole API. `request` and `hold` are protected (`reach` was removed by ADR 0007); a subsystem exposes commands such as `collect()` and `collecting()`.
 There is no shared allow-list of transitions. A command that is valid only from certain states says so: `request(State.HIGH, from = State.MID)`. A request's block is the transition's **effect**, which runs before the target's `onEntry`.
 
 A refused request is never silent (reversed by ADR 0006). Gum hooks KStateMachine's `IGNORED` result and passes a message to `ProgramScope.onRefused` callbacks; the FTC host logs it to RobotLog and the Driver Station's telemetry log. A refused request also ends with the refused outcome, which a routine's `await` returns.

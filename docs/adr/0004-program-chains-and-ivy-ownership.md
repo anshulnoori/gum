@@ -8,7 +8,7 @@ A program's setup can end with the program to run next. After a run that started
 Every run belongs to a chain. A run started from the Driver Station starts a new chain, and each chain has a Metro `ChainScope` graph that every run's `RobotGraph` extends, so values such as a pose last for the whole chain.
 This replaces the earlier success-only `onSuccess` handoff design.
 
-Ivy requirements remain how Gum decides who controls a subsystem. Subsystem commands (built with `request`, `hold`, `reach`) reserve their subsystem, and routines reserve everything they await.
+Ivy requirements remain how Gum decides who controls a subsystem. Subsystem commands (built with `request` and `hold`) reserve their subsystem, and routines reserve everything they await.
 
 ## Consequences
 

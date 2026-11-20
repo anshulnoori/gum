@@ -37,7 +37,8 @@ import ru.nsk.kstatemachine.transition.targetState
  *
  * Each region is its own Ivy requirement, so a command for the arm and one for the roller run at
  * the same time; a command that uses both, such as an Ivy group of one command for each, requires
- * both. Named commands built with [request], [hold], and [reach] are the subsystem's whole API.
+ * both. Named commands built with [request] and [hold] are the subsystem's whole API; a command
+ * that waits for a state uses Ivy's `waitUntil { arm.isIn(Arm.RAISED) }`.
  * A state can sit inside a parent state ([Nested]); a region can remember the last child of each
  * parent ([History]).
  *
@@ -45,8 +46,9 @@ import ru.nsk.kstatemachine.transition.targetState
  * Gum builds it; every region enters its initial state at INIT, once setup has run, or on the
  * subsystem's first update if it is created later. On every update after START, Gum calls
  * [beforeCommands] before button actions and commands; after commands run, it takes at most one
- * automatic transition per region, then calls each region's `during`. STOP returns every region
- * to its initial state.
+ * automatic transition per region, then calls each region's `during`. STOP calls [onStop], then
+ * returns every region to its initial state. A subsystem with nothing but a sensor or a library
+ * object to update, such as a drivetrain that Pedro drives, can declare no region.
  *
  * Construct a subsystem while an OpMode runs, on its thread; it joins that session.
  */
@@ -64,6 +66,13 @@ abstract class Subsystem {
      * decide from in the same update, such as a localizer's pose. Does nothing unless overridden.
      */
     protected open fun beforeCommands() {}
+
+    /**
+     * Runs at STOP, before every region returns to its initial state, for what a mechanism must do
+     * when the run ends whatever state it is in, such as stopping a drivetrain that a library drives.
+     * Does nothing unless overridden.
+     */
+    protected open fun onStop() {}
 
     /**
      * Declares a region that starts in [initial]; [block] sets its entry, exit, and `during`
@@ -93,21 +102,22 @@ abstract class Subsystem {
      * [effect] only, without re-entering, if [guard] allows it.
      *
      * [effect] runs when the transition is taken, before any `onExit` and `onEntry`, to set data
-     * the state uses: `request(State.SPINNING) { targetRpm = rpm }`.
+     * the state uses: `request(State.SPINNING, effect = { targetRpm = rpm })`. A trailing lambda
+     * is the [guard], which must return a Boolean, so an effect cannot be mistaken for one.
      */
     protected fun <S : Enum<S>> Region<S>.request(
         state: S,
         from: S? = null,
-        guard: (() -> Boolean)? = null,
         effect: () -> Unit = {},
+        guard: (() -> Boolean)? = null,
     ): Command = requestCommand(state, from?.let(::setOf), guard, effect)
 
     /** [request] that is valid from any state in [from]. */
     protected fun <S : Enum<S>> Region<S>.request(
         state: S,
         from: Set<S>,
-        guard: (() -> Boolean)? = null,
         effect: () -> Unit = {},
+        guard: (() -> Boolean)? = null,
     ): Command = requestCommand(state, from, guard, effect)
 
     /**
@@ -120,23 +130,17 @@ abstract class Subsystem {
     protected fun <S : Enum<S>> Region<S>.hold(
         state: S,
         from: S? = null,
-        guard: (() -> Boolean)? = null,
         effect: () -> Unit = {},
+        guard: (() -> Boolean)? = null,
     ): Command = holdCommand(state, from?.let(::setOf), guard, effect)
 
     /** [hold] that is valid from any state in [from]. */
     protected fun <S : Enum<S>> Region<S>.hold(
         state: S,
         from: Set<S>,
-        guard: (() -> Boolean)? = null,
         effect: () -> Unit = {},
+        guard: (() -> Boolean)? = null,
     ): Command = holdCommand(state, from, guard, effect)
-
-    /**
-     * A command that requires this region and finishes once it is in [state], or in a child of it.
-     * It can wait forever; limit it with Ivy, such as `reach(State.READY).raceWith(waitMs(2000.0))`.
-     */
-    protected fun <S : Enum<S>> Region<S>.reach(state: S): Command = reachCommand(state)
 
     // Updates since START; a suspended hold resumes only on a later one.
     internal var updates = 0L
@@ -154,7 +158,6 @@ abstract class Subsystem {
     }
 
     private fun build(): StateMachine {
-        check(regions.isNotEmpty()) { "${javaClass.simpleName} declares no region" }
         return createStdLibStateMachine(javaClass.simpleName, childMode = ChildMode.PARALLEL, start = false) {
             for (region in regions) region.build(addState(DefaultState(region.key)))
         }
@@ -172,13 +175,13 @@ abstract class Subsystem {
     private val deferred = ArrayList<Event>()
 
     internal fun enterInitialState() {
-        machine()
+        if (regions.isNotEmpty()) machine()
     }
 
     internal fun updateBeforeCommands() = beforeCommands()
 
     internal fun update() {
-        machine()
+        if (regions.isNotEmpty()) machine()
         updates++
         var index = 0
         while (index < regions.size) regions[index++].takeAutomatic()
@@ -203,8 +206,12 @@ abstract class Subsystem {
     }
 
     internal fun reset() {
-        var index = 0
-        while (index < regions.size) regions[index++].reset()
+        try {
+            onStop()
+        } finally {
+            var index = 0
+            while (index < regions.size) regions[index++].reset()
+        }
     }
 }
 
@@ -401,15 +408,6 @@ class Region<S : Enum<S>> internal constructor(
             }
     }
 
-    internal fun reachCommand(to: S): Command {
-        var ended = false
-        return Command.build()
-            .requiring(this)
-            .setStart { ended = false }
-            .setDone { !ended && isIn(to) }
-            .setEnd { ended = it != EndCondition.SUSPENDED }
-    }
-
     override fun toString() = "$name region of ${owner.javaClass.simpleName}"
 
     private class Go(
@@ -437,7 +435,7 @@ class Region<S : Enum<S>> internal constructor(
  *
  * A region is always in a state without children: entering a parent enters its first declared
  * child, or the child that leads to the region's initial state. A parent's `onEntry` runs before
- * its child's, and its `onExit` after. Requests, holds, automatic transitions, `from`, and `reach`
+ * its child's, and its `onExit` after. Requests, holds, automatic transitions, `from`, and `isIn`
  * on a parent cover every state inside it.
  */
 interface Nested<S : Enum<S>> {
@@ -458,12 +456,20 @@ enum class History {
 
 /** Declares one region's actions and automatic transitions, in `Subsystem.region { }`. */
 class RegionBuilder<S : Enum<S>> internal constructor(private val region: Region<S>) {
+    private val declared = HashSet<String>()
+
+    // A second action of one kind would silently replace the first.
+    private fun declare(action: String) {
+        check(declared.add(action)) { "${region.name}: $action is declared twice; put both in one $action { }" }
+    }
+
     /**
      * Sets outputs for a state. Runs each time the region enters a state, including its initial
      * state and every parent on the way in, and again after a hub reconnects, so outputs reach the
      * hub again.
      */
     fun onEntry(action: (state: S) -> Unit) {
+        declare("onEntry")
         region.entryAction = action
     }
 
@@ -472,6 +478,7 @@ class RegionBuilder<S : Enum<S>> internal constructor(private val region: Region
      * state's `onEntry`, for cleanup that belongs to the state, such as stopping a timer it started.
      */
     fun onExit(action: (state: S) -> Unit) {
+        declare("onExit")
         region.exitAction = action
     }
 
@@ -480,6 +487,7 @@ class RegionBuilder<S : Enum<S>> internal constructor(private val region: Region
      * for control that depends on sensors, such as holding a flywheel speed.
      */
     fun during(action: (state: S) -> Unit) {
+        declare("during")
         region.duringAction = action
     }
 
