@@ -5,7 +5,6 @@ plugins {
 description = "Gum's robot hardware configuration, declared in Kotlin."
 
 kotlin {
-    jvmToolchain(17)
     compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
 }
 

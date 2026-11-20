@@ -1,5 +1,6 @@
 package com.anshulnoori.gum.hardware
 
+import java.security.MessageDigest
 import kotlin.properties.ReadOnlyProperty
 import kotlin.reflect.KProperty
 
@@ -26,7 +27,7 @@ abstract class RobotConfig(val name: String) {
         }
     }
 
-    private val hubs = mutableListOf<Hub>()
+    private val hubs = mutableListOf<Module>()
     private val webcamSerialNumbers = mutableSetOf<String>()
     private var hasLimelight = false
     private val names = mutableSetOf<String>()
@@ -37,16 +38,28 @@ abstract class RobotConfig(val name: String) {
 
     protected fun controlHub(): Hub {
         require(hubs.none { it.address == CONTROL_HUB_ADDRESS }) { "$name declares more than one Control Hub" }
-        return Hub(this, "Control Hub", CONTROL_HUB_ADDRESS).also { hubs += it }
+        return Hub(this, "Control Hub", CONTROL_HUB_ADDRESS)
     }
 
     /** An Expansion Hub connected to the Control Hub over RS485, at its configured module [address]. */
-    protected fun expansionHub(address: Int = 2): Hub {
+    protected fun expansionHub(address: Int = 2): Hub = Hub(this, "Expansion Hub $address", rs485Address(address))
+
+    /**
+     * A REV Servo Hub connected to the Control Hub over RS485, at its configured module [address].
+     * It has servo ports 0 to 5.
+     */
+    protected fun servoHub(address: Int): ServoHub = ServoHub(this, "Servo Hub $address", rs485Address(address))
+
+    private fun rs485Address(address: Int): Int {
         require(address in 1..MAX_ADDRESS && address != CONTROL_HUB_ADDRESS) {
-            "Expansion Hub address $address must be 1 to $MAX_ADDRESS and not $CONTROL_HUB_ADDRESS"
+            "Hub address $address must be 1 to $MAX_ADDRESS and not $CONTROL_HUB_ADDRESS"
         }
         require(hubs.none { it.address == address }) { "$name declares two hubs at address $address" }
-        return Hub(this, "Expansion Hub $address", address).also { hubs += it }
+        return address
+    }
+
+    internal fun add(module: Module) {
+        hubs += module
     }
 
     /**
@@ -92,11 +105,11 @@ abstract class RobotConfig(val name: String) {
         xml.append("    <LynxUsbDevice name=\"Control Hub Portal\" serialNumber=\"(embedded)\" ")
             .append("parentModuleAddress=\"$CONTROL_HUB_ADDRESS\">\n")
         for (hub in hubs) {
-            xml.append("        <LynxModule name=\"${hub.name}\" port=\"${hub.address}\">\n")
+            xml.append("        <${hub.xmlTag} name=\"${hub.name}\" port=\"${hub.address}\">\n")
             for (device in registered.filter { it.hub === hub }) {
                 xml.append("            ").append(device.xml()).append('\n')
             }
-            xml.append("        </LynxModule>\n")
+            xml.append("        </${hub.xmlTag}>\n")
         }
         xml.append("    </LynxUsbDevice>\n")
         // USB devices sit directly under <Robot>, as the SDK writes them.
@@ -107,6 +120,13 @@ abstract class RobotConfig(val name: String) {
         return xml.toString()
     }
 
+    /**
+     * A hash of [toXml]. The generated activation hook records the installed configuration's hash,
+     * so INIT can tell when this declaration has changed since the app was installed.
+     */
+    fun wiringHash(): String =
+        MessageDigest.getInstance("SHA-256").digest(toXml().toByteArray()).joinToString("") { "%02x".format(it) }
+
     private companion object {
         val NAME = Regex("[a-z][a-z0-9_]*")
         const val CONTROL_HUB_ADDRESS = 173
@@ -115,14 +135,40 @@ abstract class RobotConfig(val name: String) {
     }
 }
 
-/** One REV hub. Ports are checked against the hub's hardware when a device is declared. */
-class Hub internal constructor(
+/** A module on the Control Hub's RS485 bus. Ports are checked against its hardware when a device is declared. */
+abstract class Module internal constructor(
     private val config: RobotConfig,
     internal val name: String,
     internal val address: Int,
+    internal val xmlTag: String,
 ) {
     private val used = mutableSetOf<Pair<PortKind, Int>>()
+
+    init {
+        config.add(this)
+    }
+
+    internal fun <R> slot(kind: PortKind, port: Int, xmlTag: String, role: Class<R>, cacheTolerance: Double = 0.0): DeviceSlot<R> {
+        require(port in 0 until kind.count) { "$name has ${kind.label} ports 0 to ${kind.count - 1}, not $port" }
+        require(cacheTolerance >= 0.0 && cacheTolerance.isFinite()) {
+            "$name ${kind.label} port $port has cache tolerance $cacheTolerance; it must be 0 or more"
+        }
+        require(used.add(kind to port)) { "$name ${kind.label} port $port is declared twice" }
+        return DeviceSlot { deviceName -> Device(deviceName, this, xmlTag, """ port="$port"""", role, cacheTolerance) }
+    }
+
+    internal fun register(device: Device<*>) = config.register(device)
+
+    internal enum class PortKind(val label: String, val count: Int) {
+        MOTOR("motor", 4), SERVO("servo", 6), DIGITAL("digital", 8), ANALOG("analog", 4),
+    }
+}
+
+/** One REV Control Hub or Expansion Hub. */
+class Hub internal constructor(config: RobotConfig, name: String, address: Int) :
+    Module(config, name, address, "LynxModule") {
     private val i2cCount = IntArray(I2C_BUSES)
+    private val i2cAddresses = Array(I2C_BUSES) { mutableMapOf<Int, String>() }
 
     /**
      * A motor. With a [cacheTolerance] above 0, a power within it of the last power sent is skipped;
@@ -145,30 +191,39 @@ class Hub internal constructor(
     fun analog(port: Int): DeviceSlot<Role.Analog> =
         slot(PortKind.ANALOG, port, "AnalogInput", Role.Analog::class.java)
 
-    /** An I2C device on [bus]. Several devices can share a bus. */
+    /**
+     * An I2C device on [bus]. Several devices can share a bus, but not two at the same I2C address,
+     * such as two REV color sensors; put those on different buses.
+     */
     fun <R> i2c(bus: Int, type: I2cType<R>): DeviceSlot<R> {
         require(bus in 0 until I2C_BUSES) { "$name has I2C buses 0 to ${I2C_BUSES - 1}, not $bus" }
-        return DeviceSlot { deviceName -> Device(deviceName, this, type.xmlTag, """ port="${i2cCount[bus]++}" bus="$bus"""", type.role) }
-    }
-
-    private fun <R> slot(kind: PortKind, port: Int, xmlTag: String, role: Class<R>, cacheTolerance: Double = 0.0): DeviceSlot<R> {
-        require(port in 0 until kind.count) { "$name has ${kind.label} ports 0 to ${kind.count - 1}, not $port" }
-        require(cacheTolerance >= 0.0 && cacheTolerance.isFinite()) {
-            "$name ${kind.label} port $port has cache tolerance $cacheTolerance; it must be 0 or more"
+        return DeviceSlot { deviceName ->
+            type.address?.let { address ->
+                val other = i2cAddresses[bus].put(address, deviceName)
+                require(other == null) {
+                    "$name I2C bus $bus has $other and $deviceName at the same address 0x${address.toString(16)}; " +
+                        "put one on another bus"
+                }
+            }
+            Device(deviceName, this, type.xmlTag, """ port="${i2cCount[bus]++}" bus="$bus"""", type.role)
         }
-        require(used.add(kind to port)) { "$name ${kind.label} port $port is declared twice" }
-        return DeviceSlot { deviceName -> Device(deviceName, this, xmlTag, """ port="$port"""", role, cacheTolerance) }
-    }
-
-    internal fun register(device: Device<*>) = config.register(device)
-
-    private enum class PortKind(val label: String, val count: Int) {
-        MOTOR("motor", 4), SERVO("servo", 6), DIGITAL("digital", 8), ANALOG("analog", 4),
     }
 
     private companion object {
         const val I2C_BUSES = 4
     }
+}
+
+/** A REV Servo Hub, with servo ports 0 to 5. */
+class ServoHub internal constructor(config: RobotConfig, name: String, address: Int) :
+    Module(config, name, address, "ServoHub") {
+    /** A servo. With a [cacheTolerance] above 0, a position within it of the last position sent is skipped. */
+    fun servo(port: Int, cacheTolerance: Double = 0.0): DeviceSlot<Role.Servo> =
+        slot(PortKind.SERVO, port, "Servo", Role.Servo::class.java, cacheTolerance)
+
+    /** A continuous-rotation servo. With a [cacheTolerance] above 0, a power within it of the last power sent is skipped. */
+    fun crServo(port: Int, cacheTolerance: Double = 0.0): DeviceSlot<Role.CrServo> =
+        slot(PortKind.SERVO, port, "ContinuousRotationServo", Role.CrServo::class.java, cacheTolerance)
 }
 
 /** Binds a declared port to the property it is delegated to, which supplies the device name. */
@@ -185,7 +240,7 @@ class DeviceSlot<R> internal constructor(private val create: (String) -> Device<
 class Device<R> internal constructor(
     val name: String,
     /** The hub the device is wired to, or null for a USB device such as a webcam. */
-    internal val hub: Hub?,
+    internal val hub: Module?,
     internal val xmlTag: String,
     /** The tag's attributes after the name, such as ` port="0" bus="1"`. */
     private val attributes: String,
