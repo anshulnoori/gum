@@ -1,6 +1,6 @@
 # Named commands request transitions; automatic transitions are declared apart
 
-Status: accepted. Amended by [ADR 0006](0006-plain-ivy-composition.md), which removes the refusal log and the refused outcome described below.
+Status: accepted. Amended by [ADR 0006](0006-plain-ivy-composition.md), which removes the refusal log and the refused outcome described below, and [ADR 0007](0007-subsystems-made-of-regions.md), which moves states, requests, and automatic transitions into a subsystem's regions.
 
 ## Decision
 

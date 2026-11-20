@@ -110,39 +110,43 @@ Ivy's `Scheduler` is a JVM-wide singleton; each session takes ownership of it:
 
 ## Subsystems
 
+A subsystem is a mechanism made of one or more regions. Each region is in one state of its own enum at a time, and all of a subsystem's regions are active at once. Most mechanisms have one region:
+
 ```kotlin
 @Inject
 @SingleIn(OpModeScope::class)
 class Intake(
     private val left: DcMotorSimple = hardware(RobotMap.intakeLeft),
     private val right: DcMotorSimple = hardware(RobotMap.intakeRight),
-) : Subsystem<Intake.State>(initial = State.OFF) {
+) : Subsystem() {
     enum class State(val power: Double) { OFF(0.0), COLLECTING(1.0), EJECTING(-1.0) }
 
-    override fun onEntry(state: State) {
-        left.power = state.power
-        right.power = state.power
+    val rollers = region(State.OFF) {
+        onEntry {
+            left.power = it.power
+            right.power = it.power
+        }
     }
 
-    fun collect(): Command = request(State.COLLECTING)
-    fun eject(): Command = request(State.EJECTING, from = State.OFF)   // only from Off
-    fun stop(): Command = request(State.OFF)
-    fun collecting(): Command = hold(State.COLLECTING)                 // for whileHeld
+    fun collect(): Command = rollers.request(State.COLLECTING)
+    fun eject(): Command = rollers.request(State.EJECTING, from = State.OFF)   // only from Off
+    fun stop(): Command = rollers.request(State.OFF)
+    fun collecting(): Command = rollers.hold(State.COLLECTING)                 // for whileHeld
 }
 ```
 
 - A subsystem joins the session running on its thread when it is constructed; constructing one outside a session fails.
-- Named commands are a subsystem's whole API. `request`, `hold`, and `reach` are protected, so programs call `intake.collect()`, not `intake.request(...)`.
-- `request(state)` is an Ivy command that reserves the subsystem, transitions to `state`, and finishes at once. Any state can be requested from any other.
-- `request(state, from = ...)` is valid only from the named state, or from a set of states. From any other state the state stays, and Gum reports nothing; a team that wants a log checks the state itself. Requesting the current state always runs its effect.
-- `onEntry` runs on every entry, including the initial state, which each subsystem enters at INIT, after setup. A subsystem created later enters it on its first update.
-- STOP returns each subsystem to its initial state, whatever its commands allow.
-  This resets the subsystem's state, not the mechanism: by the time Gum cleans up, the SDK has fail-safed every hub and drops nonzero motor powers and velocities, target positions, and every servo write until the next OpMode initializes (`LynxModule.sendCommand`, `OpModeManagerImpl.callActiveOpModeStop`). An initial state's `onEntry` can still set motor power 0 and change modes. When `runOpMode` ends by throwing, the SDK has not blocked writes, so cleanup reaches the hardware.
+- Named commands are a subsystem's whole API. `request`, `hold`, and `reach` are protected, so programs call `intake.collect()`, not `intake.rollers.request(...)`. Programs read a region's state, as in `intake.rollers.state`.
+- `request(state)` is an Ivy command that reserves the region, transitions it to `state`, and finishes at once. Any state can be requested from any other.
+- `request(state, from = ...)` is valid only from the named state, or from a set of states. `guard = { ... }` refuses the request when it returns false, and can read other regions. A refused request leaves the state, runs no effect, and reports nothing; a team that wants a log checks the state itself. Requesting a state the region is already in runs its effect, if the guard allows it.
+- `onEntry` runs on every entry, including the initial state, which each region enters at INIT, after setup. A subsystem created later enters it on its first update.
+- STOP returns each region to its initial state, whatever its commands allow.
+  This resets the region's state, not the mechanism: by the time Gum cleans up, the SDK has fail-safed every hub and drops nonzero motor powers and velocities, target positions, and every servo write until the next OpMode initializes (`LynxModule.sendCommand`, `OpModeManagerImpl.callActiveOpModeStop`). An initial state's `onEntry` can still set motor power 0 and change modes. When `runOpMode` ends by throwing, the SDK has not blocked writes, so cleanup reaches the hardware.
 
 Mechanisms with feedback hold data beside their state, run control in `during`, and take automatic transitions:
 
 ```kotlin
-class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Subsystem<Flywheel.State>(State.OFF) {
+class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Subsystem() {
     enum class State { OFF, SPINNING_UP, READY }
 
     private var targetRpm = 0.0
@@ -150,67 +154,65 @@ class Flywheel(private val motor: DcMotorEx = hardware(RobotMap.flywheel)) : Sub
         private set
     private val rpm get() = motor.velocity / TICKS_PER_REV * 60
 
-    override val automatic = automatic {
-        State.SPINNING_UP to State.READY whenever { abs(targetRpm - rpm) < 100 }
-        State.READY to State.SPINNING_UP whenever { abs(targetRpm - rpm) > 300 } effect { misses++ }
+    val wheel = region(State.OFF) {
+        automatic {
+            State.SPINNING_UP to State.READY whenever { abs(targetRpm - rpm) < 100 }
+            State.READY to State.SPINNING_UP whenever { abs(targetRpm - rpm) > 300 } effect { misses++ }
+        }
+        onEntry { if (it == State.OFF) motor.power = 0.0 }
+        during { if (it != State.OFF) motor.power = KP * (targetRpm - rpm) }
     }
 
-    override fun onEntry(state: State) { if (state == State.OFF) motor.power = 0.0 }
-    override fun during(state: State) { if (state != State.OFF) motor.power = KP * (targetRpm - rpm) }
-
-    fun spinTo(rpm: Double): Command = request(State.SPINNING_UP) { targetRpm = rpm }.then(reach(State.READY))
+    fun spinTo(rpm: Double): Command = wheel.request(State.SPINNING_UP) { targetRpm = rpm }.then(wheel.reach(State.READY))
 }
 ```
 
-- `automatic { A to B whenever { condition } }` declares a transition the subsystem takes by itself; `anyState to B` starts from any other state. Each update, after commands, Gum takes the first declared transition whose source is the current state and whose condition is true. Declaration order decides between matches, and Gum takes at most one automatic transition per update.
-- Conditions must only read: Gum may evaluate any of them on any update. An automatic transition without `whenever` fails when the subsystem is created.
+- `automatic { A to B whenever { condition } }` declares a transition the region takes by itself; `anyState to B` starts from any other state. Each update, after commands, Gum takes the first declared transition whose source the region is in and whose condition is true. Declaration order decides between matches, and Gum takes at most one automatic transition per region per update.
+- Conditions must only read, and can read other regions: Gum may evaluate any of them on any update. An automatic transition without `whenever` fails when the subsystem is created.
 - Automatic transitions are not commands and take no requirement. Commands cannot request them.
 - `effect { }` runs when its transition is taken, before the old state's `onExit` and the target's `onEntry`. On `request(state) { }` the block is the effect: it runs only when the transition is taken. Requesting the current state runs the effect without re-entering, so a new target takes effect.
-- `onExit(state)` runs each time the subsystem leaves `state`, after the effect and before the next `onEntry`, for cleanup that belongs to the state. Overriding it is optional.
-- `onEntry` may read `state`, which is already the state entered. A request that `onEntry` or `onExit` makes runs after the current transition finishes; KStateMachine queues it.
-- `during(state)` runs on every update after START, after commands and automatic transitions.
-- `beforeCommands()` runs on every update after START, before button actions and commands, for reads that commands decide from in the same update, such as a localizer's pose.
-- `reach(state)` reserves the subsystem and finishes once it is in `state`.
+- `onExit { }` runs each time the region leaves a state, after the effect and before the next `onEntry`, for cleanup that belongs to the state.
+- `onEntry` may read the region's `state`, which is already the state entered. A request that `onEntry` or `onExit` makes runs after the current transition finishes; KStateMachine queues it.
+- `during { }` runs on every update after START, after commands and every region's automatic transitions.
+- `beforeCommands()` is overridden on the subsystem and runs on every update after START, before button actions and commands, for reads that commands decide from in the same update, such as a localizer's pose.
+- `reach(state)` reserves the region and finishes once it is in `state`.
 - A `reach` that never arrives waits forever; Ivy limits it, as in `reach(state).raceWith(waitMs(2000.0))`. See [composing commands](#composing-commands). Faults are not reported yet.
 
-## Controller events
+### Regions, parent states, and history
+
+A mechanism whose parts change state independently has one region per part. An intake arm is raised or lowered, and its roller spins or stops, in every combination:
 
 ```kotlin
-val main = teleop("Main") { robot ->
-    var alliance = Alliance.BLUE
-    initLoop {
-        if (gamepad1.dpadUp.wasPressed) alliance = Alliance.BLUE
-        if (gamepad1.dpadDown.wasPressed) alliance = Alliance.RED
+class IntakeArm(
+    private val servo: Servo = hardware(RobotMap.armServo),
+    private val motor: DcMotorEx = hardware(RobotMap.roller),
+) : Subsystem() {
+    enum class Arm(val position: Double, override val parent: Arm? = null) : Nested<Arm> {
+        LOWERED(0.1), RAISED(0.8), RAISED_LOW(0.6, RAISED), RAISED_HIGH(0.9, RAISED)
     }
-    gamepad1.rightBumper.whileHeld { robot.intake.collecting() }
-    gamepad1.circle.onPress { robot.intake.stop().schedule() }
-    gamepad1.above(Axis.RIGHT_TRIGGER, 0.5).whileHeld { robot.intake.ejecting() }
-    (gamepad1.leftBumper and gamepad1.dpadLeft).onPress { robot.lift.climb().schedule() }
-    gamepad1.triangle.doublePress(0.3).onPress { robot.lift.stow().schedule() }
-    gamepad2.a.toggleOnPress { robot.flywheel.spinning() }
-    val slow = gamepad1.leftStickButton.toggled()
-    loop { telemetry.addData("Slow mode", slow.isDown) }
+    enum class Roller(val power: Double) { STOPPED(0.0), SPINNING(1.0) }
+
+    val arm = region(Arm.LOWERED, history = History.SHALLOW) {
+        onEntry { servo.position = it.position }
+    }
+    val roller = region(Roller.STOPPED) {
+        onEntry { motor.power = it.power }
+        automatic { Roller.SPINNING to Roller.STOPPED whenever { arm.isIn(Arm.RAISED) } }
+    }
+
+    fun raise(): Command = arm.request(Arm.RAISED)
+    fun lower(): Command = arm.request(Arm.LOWERED)
+    fun collect(): Command = roller.request(Roller.SPINNING, guard = { arm.isIn(Arm.LOWERED) })
+    fun stow(): Command = roller.request(Roller.STOPPED).with(arm.request(Arm.RAISED_HIGH))
 }
 ```
 
-- Gamepad buttons change from the SDK's gamepad callback, not by polling. The callback runs on the SDK's event loop thread; Gum queues each change and applies them on the OpMode thread at the start of the next update, in arrival order, so a tap between updates still presses and releases.
-  The queue is a JCTools multi-producer, single-consumer circular buffer (`MpscAtomicArrayQueue`, 256 changes) of preallocated changes, so a button change allocates nothing. The event loop thread and the OpMode thread may both post. If the OpMode thread stalls long enough to fill it, the next update sets each button to its latest reported state; only taps in between are lost.
-- `isDown`, `wasPressed`, and `wasReleased` describe the latest update, in INIT and after START, so INIT code polls them.
-- `onPress` and `onRelease` actions run only after START, before Ivy advances, so a command they schedule starts and runs in that update. Bind them during setup.
-- A button held through START, or down when first used, presses only after a release.
-- `whileHeld { command }` schedules a fresh command on press and cancels it on release. A subsystem's hold command, built with `hold(state)`, enters `state`, keeps running, and returns to the initial state when cancelled or interrupted, so a newer hold on the same subsystem takes over. A hold set to `InterruptedBehavior.SUSPEND` keeps its state's place instead: when Ivy resumes it, it takes its state back on the next update. If an automatic transition leaves `state`, or its `from` does not allow the request, the hold ends and leaves the state alone.
-- STOP from an action skips the remaining actions.
-- Programs use `gamepad1`, `gamepad2`, `telemetry`, and `hardwareMap` directly. The gamepads are `Controller`s: every SDK button as a `Button` (PlayStation and Xbox names are the same button), sticks and triggers as `Double`, and `raw` for the SDK gamepad. Sticks and triggers also come from the SDK's callback: each update reads the newest packet that arrived before it started. `raw` is copied on another thread, so values read from it can mix two packets.
-- `Button { condition }` checks a condition at the start of each update, for inputs with no events, such as a sensor threshold. Hub sensors have no SDK callbacks; they change when Gum bulk-reads the hubs, once per update.
-- `above(axis, threshold)`, `below(axis, threshold)`, and `between(axis, low, high)` on a `Controller` turn a stick or trigger (`Axis.LEFT_STICK_X` through `Axis.RIGHT_TRIGGER`) into a `Button` that changes from the SDK's callback like any other button, so a trigger pull is an event, not a poll. `above` and `below` are strict; `between` is inclusive. Stick Y is positive down, as in the SDK. The SDK reports axes as `Float`, so a value equal to a `Double` threshold such as 0.2 can land on either side of it.
-- Derived buttons change as their sources change, in the same update and in arrival order, so a tap between updates still counts. They are ordinary `Button`s: every binding and every combinator works on them, and they can be chained, such as `gamepad1.a.debounce(0.05).doublePress(0.3)`.
-  - `a and b`, `a or b`, and `!a` combine buttons, including buttons from both gamepads and condition buttons. `(!a).onPress { }` runs when `a` is released.
-  - `debounce(pressSeconds, releaseSeconds = 0.0)` goes down once its source has stayed down for `pressSeconds`, and up once it has stayed up for `releaseSeconds`. A change that reverses first is ignored. Each update first applies debounce times that have run out, then the changes that arrived since the last update.
-  - `multiPress(presses, windowSeconds)` goes down at the last of `presses` presses within `windowSeconds` of the first, and up at the next release; `doublePress(windowSeconds)` is two presses. The next press starts a new count. The source's own actions still run at every press.
-  - `toggled(down = false)` flips at each press of its source, for a latched setting read with `isDown`.
-  - Times count from the start of the update that applies each change, so they are accurate to one update.
-  - A derived button starts in the state its sources give it, so a source held at creation or through START does not press it. It cannot `post`.
-- `toggleOnPress { command }` schedules a fresh command at a press and cancels it at the next one. If the command has ended by then, the press schedules a fresh one.
+- The subsystem is one KStateMachine machine whose root is a parallel state; each region is one of its children, which KStateMachine calls regions.
+- Each region is its own Ivy requirement. A command for the arm and one for the roller run at the same time; a command for one region interrupts only that region's command. A group of commands for both, such as `stow`, requires both.
+- Rules between regions are guards and automatic transitions that read the other region.
+- A state enum that implements `Nested` can give a state a `parent`, declared before it. A region is always in a state without children; requesting a parent enters its first child, or the child on the way to the region's initial state. `isIn(parent)` is true in any state inside it, and `state` names the innermost state. A parent's `onEntry` runs before its child's, and its `onExit` after; moving between two children of one parent leaves the parent entered.
+- `from`, `reach`, `hold`, and automatic transitions on a parent cover every state inside it. Requesting a parent the region is already in changes nothing.
+- `history = History.SHALLOW` makes requesting a parent return to the child the region was last in; `History.DEEP` returns to the innermost state it was last in. The default, `History.NONE`, enters the first child every time.
 
 ## Composing commands
 
@@ -220,7 +222,7 @@ Gum has no composition API of its own. Programs compose subsystem commands with 
 val score = robot.intake.collect()
     .then(waitMs(500.0))
     .then(robot.flywheel.spinTo(3000.0).raceWith(waitMs(2000.0)))
-    .then(conditional({ robot.flywheel.state == Flywheel.State.READY }, robot.transfer.fire(), robot.flywheel.stop()))
+    .then(conditional({ robot.flywheel.wheel.state == Flywheel.State.READY }, robot.transfer.fire(), robot.flywheel.stop()))
 ```
 
 - `then`, `with`, `raceWith`, `until`, `sequential`, `parallel`, `race`, `deadline`, `conditional`, `match`, `repeat`, `loop`, and `lazy` come from Ivy, with Ivy's requirements: a group reserves everything its children reserve.
@@ -231,10 +233,11 @@ val score = robot.intake.collect()
 ## Background reads
 
 ```kotlin
-class Shooter(sensor: Rev2mDistanceSensor = hardware(RobotMap.ballSensor)) : Subsystem<Shooter.State>(State.IDLE) {
+class Shooter(sensor: Rev2mDistanceSensor = hardware(RobotMap.ballSensor)) : Subsystem() {
     private val distance = background { sensor.getDistance(DistanceUnit.MM) }
-    ...
-    override fun during(state: State) { if ((distance.value ?: 999.0) < 40) ... }
+    val feeder = region(State.IDLE) {
+        during { if ((distance.value ?: 999.0) < 40) ... }
+    }
 }
 ```
 

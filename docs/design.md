@@ -8,7 +8,7 @@ No source-only review establishes device compatibility or competition readiness.
 
 - Provide responsive, predictable FTC robot control.
 - Keep user code command-first and light on custom DSL syntax.
-- Model subsystem states with KStateMachine.
+- Support complex subsystem states through KStateMachine: parallel regions, parent states, and history ([ADR 0007](adr/0007-subsystems-made-of-regions.md)).
 - Integrate dependency lifetimes with OpMode lifetimes.
 - Preserve fast development through Sloth reload.
 - Prepare a usable competition baseline before expanding tooling.
@@ -21,7 +21,7 @@ The first event date, robot hardware, and performance targets remain unknown.
 | --- | --- |
 | Gum | Program descriptors, lifecycle, controller events, execution ordering, shutdown, integration diagnostics |
 | Ivy | Commands, requirements, priorities, conflict policies, sequence/parallel/race/deadline composition |
-| KStateMachine | Subsystem transitions and their guards, entry and exit behavior, and queueing a transition requested while another runs |
+| KStateMachine | Subsystem regions, parent states, history, transitions and their guards, entry and exit behavior, and queueing a transition requested while another runs |
 | DI library | Compile-time graph validation and generated construction |
 | Subsystem | Hardware ownership, control algorithms, valid operations, readiness, faults, safe responses |
 | Sloth | Development class reload and registration facilities |

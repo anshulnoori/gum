@@ -167,7 +167,7 @@ internal fun readAccessors(robot: Robot) {
             }
         }
         val value = read()
-        if (value is Subsystem<*>) {
+        if (value is Subsystem) {
             check(read() === value) {
                 "RobotGraph.${method.name} creates a new ${value.javaClass.simpleName} each time it is read. " +
                     "Annotate ${value.javaClass.simpleName} with @SingleIn(OpModeScope::class)."

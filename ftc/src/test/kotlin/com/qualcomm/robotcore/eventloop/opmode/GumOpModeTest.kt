@@ -241,11 +241,9 @@ class GumOpModeTest {
 
     enum class State { OFF, ON }
 
-    class Roller : Subsystem<State>(State.OFF) {
+    class Roller : Subsystem() {
         val entered = CopyOnWriteArrayList<State>()
-        override fun onEntry(state: State) {
-            entered += state
-        }
+        val spin = region(State.OFF) { onEntry { entered += it } }
     }
 
     interface TestGraph : Robot {

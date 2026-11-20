@@ -1,6 +1,6 @@
 # Gum owns subsystem state machines and creates the Metro robot graph
 
-Status: accepted. Amends ADR 0001, ADR 0002, and the design's non-goals. Amended by [ADR 0004](0004-program-chains-and-ivy-ownership.md), which nests `RobotGraph` in a chain graph, and [ADR 0005](0005-requested-and-automatic-transitions.md).
+Status: accepted. Amends ADR 0001, ADR 0002, and the design's non-goals. Amended by [ADR 0004](0004-program-chains-and-ivy-ownership.md), which nests `RobotGraph` in a chain graph, [ADR 0005](0005-requested-and-automatic-transitions.md), and [ADR 0007](0007-subsystems-made-of-regions.md), which makes every subsystem a set of regions.
 
 Team code should read as mechanisms and commands, not framework wiring.
 After writing an intake against raw KStateMachine and Metro, the user chose to move the state machine behind Gum and to have Gum create the Metro graph.

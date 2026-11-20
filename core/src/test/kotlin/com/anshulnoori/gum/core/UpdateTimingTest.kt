@@ -58,10 +58,9 @@ class UpdateTimingTest {
 
     enum class State { ON }
 
-    private inner class Slow : Subsystem<State>(State.ON) {
-        override fun onEntry(state: State) {}
-        override fun during(state: State) {
-            clockNanos += 5_000_000
+    private inner class Slow : Subsystem() {
+        init {
+            region(State.ON) { during { clockNanos += 5_000_000 } }
         }
     }
 

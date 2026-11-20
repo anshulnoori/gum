@@ -118,7 +118,7 @@ class ProgramScope<out E> internal constructor(
     internal val startCallbacks = mutableListOf<() -> Unit>()
     internal val tickCallbacks = mutableListOf<() -> Unit>()
     internal val stopCallbacks = mutableListOf<() -> Unit>()
-    private val subsystems = mutableListOf<Subsystem<*>>()
+    private val subsystems = mutableListOf<Subsystem>()
     private val buttons = mutableListOf<Button>()
     @Volatile internal var stopped = false
 
@@ -137,7 +137,7 @@ class ProgramScope<out E> internal constructor(
      */
     fun onStop(callback: () -> Unit) = register(stopCallbacks, callback)
 
-    internal fun register(subsystem: Subsystem<*>) {
+    internal fun register(subsystem: Subsystem) {
         subsystems += subsystem
     }
 

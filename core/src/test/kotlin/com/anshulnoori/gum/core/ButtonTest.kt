@@ -88,11 +88,12 @@ class ButtonTest {
 
     private enum class State { OFF, COLLECTING, EJECTING }
 
-    private class Roller : Subsystem<State>(State.OFF) {
+    private class Roller : Subsystem() {
         val entered = mutableListOf<State>()
-        override fun onEntry(state: State) { entered += state }
-        fun collecting() = hold(State.COLLECTING)
-        fun ejecting() = hold(State.EJECTING)
+        val roller = region(State.OFF) { onEntry { entered += it } }
+        val state get() = roller.state
+        fun collecting() = roller.hold(State.COLLECTING)
+        fun ejecting() = roller.hold(State.EJECTING)
     }
 
     @Test
@@ -362,10 +363,11 @@ class DerivedButtonTest {
 
     private enum class State { OFF, ON }
 
-    private class Light : Subsystem<State>(State.OFF) {
-        override fun onEntry(state: State) {}
-        fun on() = hold(State.ON)
-        fun flash() = request(State.ON)
+    private class Light : Subsystem() {
+        val light = region(State.OFF)
+        val state get() = light.state
+        fun on() = light.hold(State.ON)
+        fun flash() = light.request(State.ON)
     }
 
     @Test
