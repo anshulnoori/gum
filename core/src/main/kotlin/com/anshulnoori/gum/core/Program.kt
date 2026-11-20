@@ -1,8 +1,9 @@
 package com.anshulnoori.gum.core
 
 import com.pedropathing.ivy.Scheduler
-import org.jctools.queues.atomic.SpscAtomicArrayQueue
+import org.jctools.queues.atomic.MpscAtomicArrayQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.function.LongSupplier
 
 enum class ProgramKind { TELEOP, AUTONOMOUS, UTILITY }
 
@@ -148,8 +149,14 @@ class ProgramScope<out E> internal constructor(
         latest.start()
     }
 
+    /**
+     * Stops every reader, then waits for them together, so the wait stays inside the SDK's stop
+     * limit however many readers are blocked in a slow read.
+     */
     internal fun stopBackground() {
-        for (latest in background) latest.stop()
+        for (latest in background) latest.requestStop()
+        val deadline = System.nanoTime() + BACKGROUND_STOP_NANOS
+        for (latest in background) latest.awaitStop(deadline)
         background.clear()
     }
 
@@ -158,9 +165,10 @@ class ProgramScope<out E> internal constructor(
         buttons += button
     }
 
-    // Changes the host reports from its one input thread, applied on this thread at the next update.
-    // A bounded circular buffer of preallocated changes: reporting allocates nothing.
-    private val posted = SpscAtomicArrayQueue<Button.Change>(POSTED_CAPACITY)
+    // Changes the host's input thread and this session's thread report, applied on this thread at
+    // the next update. A bounded circular buffer of preallocated changes: reporting allocates nothing.
+    // It takes several producers, so a button a program reports itself never corrupts it.
+    private val posted = MpscAtomicArrayQueue<Button.Change>(POSTED_CAPACITY)
     // Set when the buffer was full; the next update then applies each button's latest reported state.
     private val overflowed = AtomicBoolean()
     private val changes = ArrayList<Button>()
@@ -173,10 +181,10 @@ class ProgramScope<out E> internal constructor(
     }
 
     /** The session's time source, in nanoseconds. Tests replace it. */
-    internal var clock: () -> Long = System::nanoTime
+    internal var clock: LongSupplier = LongSupplier(System::nanoTime)
 
     /** When the current update started; every change it applies counts as happening then. */
-    internal var now: Long = clock()
+    internal var now: Long = clock.asLong
         private set
 
     /** Applies a change to [button], records it for dispatch, and passes it to buttons derived from it. */
@@ -192,7 +200,7 @@ class ProgramScope<out E> internal constructor(
      * condition buttons, then runs actions. Derived buttons change as their sources do, in order.
      */
     internal fun updateButtons(dispatch: Boolean) {
-        now = clock()
+        now = clock.asLong
         changes.clear()
         pressed.clear()
         // Buttons created during an update join the list; index iteration picks them up.
@@ -236,6 +244,11 @@ class ProgramScope<out E> internal constructor(
         while (index < subsystems.size) subsystems[index++].update()
     }
 
+    internal fun reapplyOutputs() {
+        var index = 0
+        while (index < subsystems.size) subsystems[index++].reapply()
+    }
+
     internal fun resetSubsystems() {
         var failure: Throwable? = null
         for (subsystem in subsystems.asReversed()) {
@@ -254,6 +267,9 @@ class ProgramScope<out E> internal constructor(
 
         /** Reported changes one update can hold, far more than a Driver Station sends between updates. */
         const val POSTED_CAPACITY = 256
+
+        /** How long STOP waits for background readers, well inside the SDK's 900 ms stop limit. */
+        const val BACKGROUND_STOP_NANOS = 400_000_000L
     }
 
     internal fun checkThread() {
@@ -325,6 +341,15 @@ class OpModeSession internal constructor(private val scope: ProgramScope<*>) {
         currentState = SessionState.ACTIVE
         started = true
         dispatch(scope.startCallbacks)
+    }
+
+    /**
+     * Runs every subsystem's `onEntry` for its current state again, so outputs it set reach the
+     * hardware again, such as after a hub that lost power reconnects.
+     */
+    fun reapplyOutputs() {
+        scope.checkThread()
+        if (currentState != SessionState.STOPPED) scope.reapplyOutputs()
     }
 
     /** Advances the current phase without creating threads or scheduling work independently. */

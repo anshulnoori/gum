@@ -55,8 +55,8 @@ class Button private constructor(private val read: (() -> Boolean)?, down: Boole
     }
 
     /**
-     * Reports that the button is now [down]; repeats are ignored. Call it from one thread only, the
-     * host's input thread, or from the session's own thread.
+     * Reports that the button is now [down]; repeats are ignored. Call it from the host's input
+     * thread or from the session's own thread; changes apply at the next update in arrival order.
      */
     fun post(down: Boolean) {
         check(react == null) { "A derived button changes only with its sources" }

@@ -1,6 +1,8 @@
 package com.anshulnoori.gum.core
 
 import com.pedropathing.ivy.Command
+import com.pedropathing.ivy.CommandBuilder
+import com.pedropathing.ivy.behaviors.InterruptedBehavior
 import com.pedropathing.ivy.commands.Commands.instant
 import com.pedropathing.ivy.commands.Commands.waitUntil
 import kotlin.test.Test
@@ -296,6 +298,80 @@ class SubsystemTest {
         session.tick()
         assertEquals(1000.0, flywheel.target)
         assertEquals(listOf(Speed.OFF, Speed.SPINNING_UP), flywheel.entered, "the same state is not re-entered")
+        session.stop()
+    }
+
+    @Test
+    fun `onEntry can read the state it entered, including the initial state at INIT`() {
+        val seen = mutableListOf<State>()
+        val (session, roller) = session {
+            object : Roller() {
+                override fun onEntry(state: State) {
+                    seen += this.state
+                }
+            }
+        }
+        roller.collect().schedule()
+        session.tick()
+        assertEquals(listOf(State.OFF, State.COLLECTING), seen)
+        session.stop()
+    }
+
+    @Test
+    fun `a transition runs its effect, then the old state's onExit, then the new state's onEntry`() {
+        val events = mutableListOf<String>()
+        val (session, roller) = session {
+            object : Roller() {
+                override fun onEntry(state: State) { events += "enter $state" }
+                override fun onExit(state: State) { events += "exit $state" }
+            }
+        }
+        roller.ejectFromOff().schedule()
+        session.tick()
+        session.stop()
+        assertEquals(listOf("enter OFF", "exit OFF", "enter EJECTING", "exit EJECTING", "enter OFF"), events)
+    }
+
+    @Test
+    fun `a request made from onEntry runs after the current transition finishes`() {
+        val (session, roller) = session {
+            object : Roller() {
+                override fun onEntry(state: State) {
+                    entered += state.name
+                    if (state == State.EJECTING) stop().schedule()
+                }
+            }
+        }
+        roller.eject().schedule()
+        session.tick()
+        assertEquals(State.OFF, roller.state)
+        assertEquals(listOf("OFF", "EJECTING", "OFF"), roller.entered)
+        session.stop()
+    }
+
+    @Test
+    fun `a suspended hold keeps its state's place and takes it back when Ivy resumes it`() {
+        val (session, roller) = session { Roller() }
+        val collecting = (roller.collecting() as CommandBuilder).setInterruptedBehavior(InterruptedBehavior.SUSPEND)
+        collecting.schedule()
+        session.tick()
+        roller.eject().schedule()
+        assertEquals(State.EJECTING, roller.state, "the suspension does not return to the initial state")
+        session.tick()
+        session.tick()
+        assertEquals(State.COLLECTING, roller.state, "resumed once eject released the roller")
+        assertTrue(collecting.isScheduled)
+        assertEquals(listOf("OFF", "COLLECTING", "EJECTING", "COLLECTING"), roller.entered)
+        session.stop()
+    }
+
+    @Test
+    fun `reapplying outputs runs the current state's onEntry again`() {
+        val (session, roller) = session { Roller() }
+        roller.collect().schedule()
+        session.tick()
+        session.reapplyOutputs()
+        assertEquals(listOf("OFF", "COLLECTING", "COLLECTING"), roller.entered)
         session.stop()
     }
 }

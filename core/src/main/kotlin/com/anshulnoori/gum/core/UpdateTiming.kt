@@ -1,5 +1,7 @@
 package com.anshulnoori.gum.core
 
+import java.util.function.LongSupplier
+
 /** One part of Gum's update, in the order it runs. */
 enum class UpdatePhase(val label: String) {
     /** The host's work before the session's update, such as clearing the bulk cache and taking the newest gamepad packet. */
@@ -34,7 +36,7 @@ enum class UpdatePhase(val label: String) {
  */
 class UpdateTiming(
     private val windowNanos: Long = 1_000_000_000,
-    private val clock: () -> Long = System::nanoTime,
+    private val clock: LongSupplier = LongSupplier(System::nanoTime),
 ) {
     /** One window's averages, in milliseconds. */
     class Report internal constructor(
@@ -70,7 +72,7 @@ class UpdateTiming(
 
     /** Starts an update, which also ends the previous one; ends the window once it is long enough. */
     fun begin() {
-        val now = clock()
+        val now = clock.asLong
         if (updateStart != NONE) {
             val period = now - updateStart
             periodNanos += period
@@ -102,7 +104,7 @@ class UpdateTiming(
     /** Ends [phase]: the time since the previous phase ended, or since [begin], counts toward it. */
     fun end(phase: UpdatePhase) {
         if (lastMark == NONE) return
-        val now = clock()
+        val now = clock.asLong
         phaseNanos[phase.ordinal] += now - lastMark
         lastMark = now
     }

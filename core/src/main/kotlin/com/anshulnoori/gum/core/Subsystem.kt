@@ -7,11 +7,15 @@ import ru.nsk.kstatemachine.state.DefaultState
 import ru.nsk.kstatemachine.state.addInitialState
 import ru.nsk.kstatemachine.state.addState
 import ru.nsk.kstatemachine.state.onEntry
-import ru.nsk.kstatemachine.state.transition
+import ru.nsk.kstatemachine.state.onExit
+import ru.nsk.kstatemachine.state.transitionConditionally
 import ru.nsk.kstatemachine.statemachine.StateMachine
 import ru.nsk.kstatemachine.statemachine.createStdLibStateMachine
 import ru.nsk.kstatemachine.statemachine.processEventBlocking
+import ru.nsk.kstatemachine.statemachine.startBlocking
+import ru.nsk.kstatemachine.transition.noTransition
 import ru.nsk.kstatemachine.transition.onTriggered
+import ru.nsk.kstatemachine.transition.targetState
 
 /**
  * A mechanism that is in one state at a time.
@@ -38,8 +42,18 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
     /** Transitions the subsystem takes by itself, built with [automatic]. Commands cannot request them. */
     protected open val automatic: Automatic<S>? = null
 
-    /** Sets outputs for [state]. Runs each time the subsystem enters a state, including [initial]. */
+    /**
+     * Sets outputs for [state]. Runs each time the subsystem enters a state, including [initial],
+     * and again after a hub reconnects, so outputs it set reach the hub again.
+     */
     protected abstract fun onEntry(state: S)
+
+    /**
+     * Runs each time the subsystem leaves [state], after the transition's effect and before the next
+     * state's [onEntry], for cleanup that belongs to the state, such as stopping a timer it started.
+     * Does nothing unless overridden.
+     */
+    protected open fun onExit(state: S) {}
 
     /**
      * Runs on every update after START while in [state], after commands and automatic transitions,
@@ -54,11 +68,7 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
     protected open fun beforeCommands() {}
 
     /** The current state. */
-    val state: S
-        get() {
-            machine
-            return current
-        }
+    val state: S get() = current
 
     /**
      * A command that transitions to [state] and finishes at once; the subsystem stays in [state]
@@ -103,15 +113,30 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
     protected fun hold(state: S, from: Set<S>, effect: () -> Unit = {}): Command =
         holdCommand(state, from, effect)
 
+    // A hold that Ivy suspends keeps its place: Ivy resumes it later without starting it again, so
+    // it takes its state back on its first update after the suspension. Ivy 1.1.1 can also run a
+    // command it just suspended once more in the same update, which must not take the state back
+    // from the command that took over; a suspension therefore waits for the subsystem's next update.
     private fun holdCommand(state: S, from: Set<S>?, effect: () -> Unit): Command {
         var ended = false
+        var suspendedAt = NOT_SUSPENDED
         return Command.build()
             .requiring(this)
-            .setStart { ended = false; take(state, from, effect) }
-            .setDone { !ended && this.state != state }
+            .setStart { ended = false; suspendedAt = NOT_SUSPENDED; take(state, from, effect) }
+            .setExecute {
+                if (suspendedAt != NOT_SUSPENDED && updates > suspendedAt) {
+                    suspendedAt = NOT_SUSPENDED
+                    take(state, from, effect)
+                }
+            }
+            .setDone { !ended && suspendedAt == NOT_SUSPENDED && this.state != state }
             .setEnd {
-                ended = it != EndCondition.SUSPENDED
-                if (this.state == state && state != initial) machine.processEventBlocking(Reset)
+                if (it == EndCondition.SUSPENDED) {
+                    suspendedAt = updates
+                } else {
+                    ended = true
+                    if (this.state == state && state != initial) go(initial)
+                }
             }
     }
 
@@ -146,75 +171,92 @@ abstract class Subsystem<S : Enum<S>>(private val initial: S) {
 
     private var current = initial
 
-    // Built on first use, after the subclass has finished constructing its outputs.
-    private val machine: StateMachine by lazy { build() }
+    // Updates since START; a suspended hold resumes only on a later one.
+    private var updates = 0L
+
+    // Built at INIT, or on first use for a subsystem created later, after the subclass has
+    // finished constructing its outputs.
+    private var machine: StateMachine? = null
 
     private val automaticTransitions: List<AutomaticTransition<S>> by lazy { automatic?.transitions.orEmpty() }
 
     /** Requests [state]; the state stays when [from] does not allow it. */
     private fun take(state: S, from: Set<S>?, effect: () -> Unit) {
-        if (state == this.state) effect() else machine.processEventBlocking(Request(state, from, effect))
+        if (state == current) effect() else go(state, from, effect)
+    }
+
+    // KStateMachine queues an event sent while it handles another, such as a request an onEntry
+    // schedules, and handles it after the current transition finishes.
+    private fun go(to: S, from: Set<S>? = null, effect: () -> Unit = {}) {
+        machine().processEventBlocking(Go(to, from, effect))
     }
 
     internal fun enterInitialState() {
-        machine
+        machine()
     }
 
     internal fun updateBeforeCommands() = beforeCommands()
 
     internal fun update() {
-        val state = state
-        val transition = automaticTransitions.firstOrNull {
-            (it.from == null || it.from == state) && it.to != state && it.condition!!()
+        machine()
+        updates++
+        val state = current
+        val transitions = automaticTransitions
+        var index = 0
+        while (index < transitions.size) {
+            val transition = transitions[index++]
+            if ((transition.from == null || transition.from == state) && transition.to != state && transition.condition!!()) {
+                go(transition.to, effect = transition.effect)
+                break
+            }
         }
-        if (transition != null) machine.processEventBlocking(Taken(transition))
         during(current)
     }
 
-    internal fun reset() {
-        machine.processEventBlocking(Reset)
+    /** Sets the current state's outputs again, after a hub that lost them reconnects. */
+    internal fun reapply() {
+        if (machine != null) onEntry(current)
     }
 
-    private val allStates: List<S> by lazy { initial.declaringJavaClass.enumConstants.toList() }
+    internal fun reset() {
+        go(initial)
+    }
+
+    // The machine exists before it starts, so a request that the initial state's onEntry makes
+    // reaches the machine instead of building another one.
+    private fun machine(): StateMachine = machine ?: build().also {
+        machine = it
+        it.startBlocking()
+    }
 
     private fun build(): StateMachine {
-        val transitions = automaticTransitions
-        return createStdLibStateMachine(javaClass.simpleName) {
-            val nodes = allStates.associateWith { DefaultState(it.name) }
+        val states = initial.declaringJavaClass.enumConstants
+        return createStdLibStateMachine(javaClass.simpleName, start = false) {
+            val nodes = states.associateWith { DefaultState(it.name) }
             for ((state, node) in nodes) {
                 if (state == initial) addInitialState(node) else addState(node)
                 node.onEntry {
                     current = state
                     this@Subsystem.onEntry(state)
                 }
+                node.onExit { this@Subsystem.onExit(state) }
             }
-            // Any state can be requested from any other; a request's own `from` is the only limit.
-            // A request no transition accepts is ignored, so the state stays.
-            for ((from, node) in nodes) {
-                for (to in allStates) {
-                    if (to == from) continue
-                    node.transition<Request> {
-                        guard = { event.state == to && event.from?.contains(from) != false }
-                        targetState = nodes.getValue(to)
-                    }.onTriggered { it.event.effect() }
+            // Requests, automatic transitions, and STOP all send Go. A request whose `from` does not
+            // include the current state takes no transition, so the state stays.
+            transitionConditionally<Go> {
+                direction = {
+                    @Suppress("UNCHECKED_CAST")
+                    if (event.from?.contains(current) == false) noTransition() else targetState(nodes.getValue(event.to as S))
                 }
-            }
-            for (automatic in transitions) {
-                for (from in automatic.from?.let(::listOf) ?: allStates.filter { it != automatic.to }) {
-                    nodes.getValue(from).transition<Taken> {
-                        guard = { event.transition === automatic }
-                        targetState = nodes.getValue(automatic.to)
-                    }.onTriggered { automatic.effect() }
-                }
-            }
-            // STOP always returns to the initial state, whatever the subsystem's commands allow.
-            transition<Reset> { targetState = nodes.getValue(initial) }
+            }.onTriggered { it.event.effect() }
         }
     }
 
-    private class Request(val state: Any, val from: Set<*>?, val effect: () -> Unit) : Event
-    private class Taken(val transition: AutomaticTransition<*>) : Event
-    private object Reset : Event
+    private class Go(val to: Any, val from: Set<*>?, val effect: () -> Unit) : Event
+
+    private companion object {
+        const val NOT_SUSPENDED = -1L
+    }
 }
 
 /** A subsystem's automatic transitions, built with [Subsystem.automatic]. */

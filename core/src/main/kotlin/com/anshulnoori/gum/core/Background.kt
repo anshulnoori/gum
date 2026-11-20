@@ -44,11 +44,16 @@ class Latest<T : Any> internal constructor(private val periodMillis: Long, priva
 
     internal fun start() = thread.start()
 
-    /** Stops reading and waits briefly for an in-progress read to finish. */
-    internal fun stop() {
+    /** Asks the reader to stop after its current read. */
+    internal fun requestStop() {
         running = false
         LockSupport.unpark(thread)
-        thread.join(250)
+    }
+
+    /** Waits until the reader has stopped or [deadline], on [System.nanoTime], has passed. */
+    internal fun awaitStop(deadline: Long) {
+        val left = deadline - System.nanoTime()
+        if (left > 0) thread.join((left + 999_999) / 1_000_000)
     }
 
     private fun run() {

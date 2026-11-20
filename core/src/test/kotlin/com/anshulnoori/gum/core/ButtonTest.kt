@@ -1,6 +1,7 @@
 package com.anshulnoori.gum.core
 
 import com.pedropathing.ivy.Command
+import java.util.function.LongSupplier
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -259,7 +260,7 @@ class DerivedButtonTest {
         lateinit var source: Button
         lateinit var debounced: Button
         val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
-            clock = { time }
+            clock = LongSupplier { time }
             source = Button.reported()
             debounced = source.debounce(pressSeconds = 0.05, releaseSeconds = 0.1)
             debounced.onPress { events += "press at ${time / ms}" }
@@ -317,7 +318,7 @@ class DerivedButtonTest {
         lateinit var a: Button
         lateinit var b: Button
         val session = teleop<Unit, Unit>("Driver", dependencies = { Unit }) {
-            clock = { time }
+            clock = LongSupplier { time }
             a = Button.reported()
             b = Button.reported()
             val double = a.doublePress(0.3)
