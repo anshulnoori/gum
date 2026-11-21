@@ -86,7 +86,7 @@ Verify on a Control Hub that `initOpMode`, called when the SDK's stop OpMode ini
 ## 6. Integrate FTC registration and Sloth reload
 
 Status: registration implemented with Sloth 0.3.2's `OpModeScanner`; device evidence missing.
-`GumProgramScanner` registers public top-level programs in TeamCode's package. The Sloth Load plugin builds the reload dex (`dexSloth`).
+`GumProgramScanner` registers every public program in TeamCode, a top-level `val` or an `object` property in any package; see [FTC host](lifecycle.md#ftc-host). The Sloth Load plugin builds the reload dex (`dexSloth`).
 Programs whose class initialization creates hardware would break scanning; Gum builders create nothing until INIT.
 
 Register TeleOp, autonomous, and utility descriptors through the selected Sloth interface.
@@ -99,7 +99,7 @@ Exercise dynamic successor initialization on the selected FTC SDK.
 ## 6b. Integrate background reads and Panels
 
 Status: background reads and Panels telemetry and field drawing are implemented and JVM-tested. Panels on a Robot Controller is not yet verified.
-SDK 12 already skips motor and servo writes that repeat the last value exactly. Gum adds an opt-in write cache that also skips writes within a tolerance; see [hardware](hardware.md).
+SDK 12 already skips a motor power or servo position equal to the last one sent less than 500 ms ago. Gum adds an opt-in write cache that also skips writes within a tolerance; see [hardware](hardware.md).
 
 ## 7. Establish the competition baseline
 

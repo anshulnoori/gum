@@ -33,7 +33,7 @@ The older Mercurial default branch is not evidence for MercurialFTC's v2 depende
 - [Dagger](https://dagger.dev/): generated DI alternative.
 
 Compile-time generation does not prove one option is faster on a Control Hub.
-Metro and Sloth generated-code compatibility remains untested.
+apex-2026 assembles into an APK with Metro 1.5.2 and Sloth 0.3.2 ([implementation plan](../implementation-plan.md)); their generated code has not yet run or reloaded on a Control Hub.
 
 ## FTC platform and motion research
 

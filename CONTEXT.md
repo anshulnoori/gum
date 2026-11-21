@@ -44,7 +44,7 @@ The action a transition runs when it is taken, before the target state's entry.
 A command that transitions a region to a state and finishes at once; the region stays in that state afterward. It can be valid only from certain states, or only while a guard allows it.
 
 **Hold**:
-A command that enters a state and keeps running. When it is cancelled or interrupted, the region returns to its initial state. If an automatic transition leaves the state, the hold ends and leaves the state alone.
+A command that enters a state and keeps running. When it is cancelled or interrupted, the region returns to its initial state. A hold that Ivy suspends instead keeps its place and takes the state back when resumed; cancelled while suspended, it leaves the region to the command that took it. If an automatic transition leaves the state, the hold ends and leaves the state alone.
 
 **Refused request**:
 A request made from a state it is not valid from, or while its guard does not allow it. The state stays, its effect does not run, and Gum reports nothing.
